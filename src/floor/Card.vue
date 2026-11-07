@@ -36,7 +36,7 @@ import {
 import { isTagPlanning } from '@/floor/tagPlanState';
 import { formatGenerationMeta } from '@/generationMeta';
 import { activeComfyPreset, activeOrientationLock, imageDisplayMaxHeight, settings } from '@/state/settings';
-import { chineseAppearanceForText, roleNamesForText } from '@/state/charTags';
+import { chineseAppearanceForText, rolesForText } from '@/state/charTags';
 import { beginImage, failImage, finishImage, patchImagePrompt, safeHistory } from '@/state/history';
 import { copyText } from '@/st/clipboard';
 import { getContext } from '@/st/context';
@@ -299,14 +299,14 @@ async function generate(): Promise<void> {
     characters: props.characters.map(character => ({ ...character })),
     size: effectiveSize.value,
     dsh: props.dsh,
-    // 角色由柏宝绘管理:按画面散文去角色库里认人,把**名字**交上去,DSH 再用它自己的档案
-    // 查形象块。分工是「柏宝绘决定画谁,DSH 决定这人长什么样」——只传名字不传块,
-    // 免得同一个角色有两套外貌真源。
+    // 角色由柏宝绘管理:按画面散文去角色库里认人,把**英文块**一起交上去。
     //
-    // 为什么不交 props.characters:那是 <characters> 子标签解析出来的,占位模式的世界书
-    // 只许写中文散文、不许子标签,故它在这里恒为空。认人只能按名字——占位里写了谁就叫谁。
-    // 用散文去匹配而不是 props.prompt:占位卡片没有 tag,prompt 是空串。
-    dshCharacters: dshActive.value ? roleNamesForText(props.dsh) : [],
+    // 走 DSH 的 roles 旁路:它收到块就直接拼进正向,不查自己的 identities 档案、
+    // 不过 line 门禁。所以两边的角色库不必同名、不必同步——角色只归柏宝绘管。
+    //
+    // 为什么用 props.dsh 匹配而不是 props.characters:占位模式的世界书只许写中文散文、
+    // 不许 <characters> 子标签,故 props.characters 恒空;也不该用 props.prompt(占位没有 tag)。
+    dshRoles: dshActive.value ? rolesForText(props.dsh) : [],
     source: { chatId: props.chatId, messageId: props.messageId, slot: props.seq },
   };
   // NAI 需要闸门排队 → 先显示「排队中」;ComfyUI 有服务端队列,直接进 generating;

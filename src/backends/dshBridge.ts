@@ -94,16 +94,25 @@ export interface DshProgress {
   }) => void;
 }
 
+/** 一个要拼进画面的角色：名字 + 英文 tag 块。 */
+export interface DshRole {
+  /** 角色名。只用于回执与日志（DSH 不拿它查档案）。 */
+  name: string;
+  /** 英文 danbooru tag 串，原样拼进正向。 */
+  charBlock: string;
+}
+
 export interface DshGenerateValues {
   /** 画面占位散文。 */
   scene: string;
   /**
-   * 这一单画谁（角色名，按出场顺序；DSH 拿它去自己的 identities 档案里认人）。
+   * 角色块（旁路通道）：调用方自带的 { name, charBlock }，按出场顺序，第一位站主角位。
    *
-   * 只传名字不传外貌块：形象块、LoRA、绑哪条配置集都由 DSH 的档案决定，
-   * 柏宝绘只负责回答「这一轮谁在场」。
+   * 与 characters 是两条互不相干的路：characters 是「名字，去 DSH 档案里查」，
+   * roles 是「块，直接用」。给了 roles 时 DSH 整条走旁路——不读 identities、不查 LoRA、
+   * 不过 line 门禁，块原样拼进正向。柏宝绘（角色由它管理）走这条。
    */
-  characters?: string[];
+  roles?: DshRole[];
   size: Orientation;
   /** 追加负向串;DSH 侧与配置集 negativeHint 合并,不替换。 */
   negative?: string;
@@ -300,7 +309,9 @@ export async function generateDshImage(
   };
   // 可选字段一律「有才发」：发空串会让 DSH 侧把「没填」当成「显式要求空」，
   // 例如 configSet 空串本应表示「用默认集」，发过去可能被当成一个不存在的集 id。
-  if (values.characters?.length) payload.characters = values.characters;
+  // roles 走 roles 字段（不是 characters）：两条通道语义不同，混用会让 DSH 分不清
+  // 「这是名字还是块」。
+  if (values.roles?.length) payload.roles = values.roles;
   if (conn.configSet?.trim()) payload.configSet = conn.configSet.trim();
   if (values.negative?.trim()) payload.negative = values.negative.trim();
   if (conn.count > 0) payload.count = Math.min(8, Math.max(1, Math.floor(conn.count)));

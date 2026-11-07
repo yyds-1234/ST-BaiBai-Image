@@ -105,7 +105,7 @@ describe('generateDshImage（协议 v2：入队 + 轮询）', () => {
 
     await generateDshImage(conn({ token: 'secret' }), {
       ...VALUES,
-      characters: ['林夏'],
+      roles: [{ name: '林夏', charBlock: '1girl, long black hair' }],
       source: { chatId: 'st-abc', messageId: 42, slot: 0 },
     });
 
@@ -119,7 +119,7 @@ describe('generateDshImage（协议 v2：入队 + 轮询）', () => {
       size: 'portrait',
       seed: 12345,
       count: 1,
-      characters: ['林夏'],
+      roles: [{ name: '林夏', charBlock: '1girl, long black hair' }],
       source: { chatId: 'st-abc', messageId: 42, slot: 0 },
     });
     expect(body.configSet).toBeUndefined();

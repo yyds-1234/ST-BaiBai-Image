@@ -12,7 +12,7 @@ import {
   emptyCharFields,
   mergeCharTagSeed,
   normalizeCharTagStore,
-  roleNamesForText,
+  rolesForText,
   type CharTagAutoOp,
 } from '@/state/charTags';
 import type { STMessage } from '@/st/context';
@@ -287,12 +287,12 @@ describe('中文外貌(zh)的认人与拼接', () => {
   });
 });
 
-describe('roleNamesForText：交给 DSH 的在场角色名单', () => {
-  /** 与上面同一套塞库手法:roleNamesForText 也读 charTagLib。 */
-  function seed(entries: Array<{ name: string; raw?: string }>): void {
+describe('rolesForText：交给 DSH 的角色块（旁路）', () => {
+  /** 与上面同一套塞库手法:rolesForText 也读 charTagLib。 */
+  function seed(entries: Array<{ name: string; raw?: string; fields?: Record<string, string> }>): void {
     charTagLib.entries = entries.map(entry => ({
       name: entry.name,
-      fields: emptyCharFields(),
+      fields: { ...emptyCharFields(), ...(entry.fields ?? {}) },
       raw: entry.raw ?? '1girl',
       nl: '',
       source: 'manual' as const,
@@ -301,32 +301,47 @@ describe('roleNamesForText：交给 DSH 的在场角色名单', () => {
     }));
   }
 
-  it('按名字认出在场角色，只给名字（外貌归 DSH 的档案管）', () => {
+  it('按名字认出在场角色，给出英文块', () => {
     seed([{ name: '林夏', raw: '1girl, long black hair' }]);
-    expect(roleNamesForText('傍晚的天台，林夏靠着栏杆回头')).toEqual(['林夏']);
+    expect(rolesForText('傍晚的天台，林夏靠着栏杆回头')).toEqual([
+      { name: '林夏', charBlock: '1girl, long black hair' },
+    ]);
   });
 
-  it('多个角色按关系库顺序给出；没出场的角色不进清单', () => {
-    seed([
-      { name: '林夏' },
-      { name: '苏曼' },
-      { name: '许梨' },
+  it('结构化字段按固定顺序拼成块（与本地后端拼 tag 同一口径）', () => {
+    seed([{ name: '林夏', raw: '', fields: { sex: '1girl', hair: 'long black hair', eyes: 'red eyes' } }]);
+    expect(rolesForText('林夏回头')).toEqual([
+      { name: '林夏', charBlock: '1girl, long black hair, red eyes' },
     ]);
-    expect(roleNamesForText('林夏和苏曼在门口')).toEqual(['林夏', '苏曼']);
-    expect(roleNamesForText('只有许梨一个人')).toEqual(['许梨']);
+  });
+
+  it('没出场的角色不进清单；空块的条目也不进', () => {
+    seed([
+      { name: '林夏', raw: '1girl, long black hair' },
+      { name: '苏曼', raw: '1girl, short hair' },
+      { name: '许梨', raw: '', fields: {} },
+    ]);
+    // 「许梨」被提到了，但她的块是空串：交给 DSH 等于说「这个角色没长相」，
+    // 结果是不注入，还会在回执里被当成「档案缺形象块」报出来。
+    expect(rolesForText('林夏和许梨在门口')).toEqual([
+      { name: '林夏', charBlock: '1girl, long black hair' },
+    ]);
   });
 
   it('长名覆盖短名，与中文外貌走同一个认人函数', () => {
-    seed([{ name: '雪' }, { name: '小雪' }]);
-    expect(roleNamesForText('小雪走过来')).toEqual(['小雪']);
+    seed([
+      { name: '雪', raw: '1girl, white hair' },
+      { name: '小雪', raw: '1girl, silver hair' },
+    ]);
+    expect(rolesForText('小雪走过来')).toEqual([{ name: '小雪', charBlock: '1girl, silver hair' }]);
   });
 
   it('空文本与空库给出空清单（调用方据此不传该字段）', () => {
-    seed([{ name: '林夏' }]);
-    expect(roleNamesForText('')).toEqual([]);
-    expect(roleNamesForText('   ')).toEqual([]);
+    seed([{ name: '林夏', raw: '1girl' }]);
+    expect(rolesForText('')).toEqual([]);
+    expect(rolesForText('   ')).toEqual([]);
     seed([]);
-    expect(roleNamesForText('林夏')).toEqual([]);
+    expect(rolesForText('林夏')).toEqual([]);
   });
 });
 describe('global library merge & lock', () => {

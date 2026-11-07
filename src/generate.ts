@@ -70,13 +70,14 @@ export interface GenerateInput {
    */
   dsh?: string;
   /**
-   * 这一单画谁（柏宝绘认出来的在场角色名，按出场顺序）。
+   * 角色块（柏宝绘的角色库认出来的在场角色，按出场顺序）。
    *
-   * **分工**：柏宝绘决定「画谁」——它看得见正文，知道这一轮谁在场；DSH 决定
-   * 「这人长什么样」——形象块、LoRA、绑哪条线都在它自己的 identities 档案里。
-   * 故这里只传名字，不传外貌块：传块等于让同一件事有两套真源。
+   * **角色由柏宝绘管理**：它看得见正文、知道这一轮谁在场、长什么样，直接把英文块交给 DSH。
+   * DSH 走**旁路**处理这批 —— 不读它自己的 identities 档案、不查 LoRA、不过 line 门禁，
+   * 块原样拼进正向。两条通道互不相干：要说名字让 DSH 查档案用 characters，
+   * 要自己给块用 roles。
    */
-  dshCharacters?: string[];
+  dshRoles?: { name: string; charBlock: string }[];
 
   /**
    * 纯诊断坐标 { chatId, messageId, slot }。只有 DSH 渠道会用到(它写进自己的 runs.jsonl)。
@@ -315,9 +316,9 @@ export async function generateImage(
         conn,
         {
           scene,
-          // 只传名字：DSH 拿它去自己的档案里认人（形象块 / LoRA / 绑线都归它管）。
-          // 空清单就整个字段不发——发 [] 会让 DSH 多报一条「无角色」。
-          characters: input.dshCharacters?.length ? input.dshCharacters : undefined,
+          // 角色块走旁路字段 roles：DSH 收到块就直接拼进正向，不查它自己的档案。
+          // 空清单整个字段不发（发了等于声明「这批角色没长相」）。
+          roles: input.dshRoles?.length ? input.dshRoles : undefined,
           size,
           negative: input.negative,
           seed: input.seed,

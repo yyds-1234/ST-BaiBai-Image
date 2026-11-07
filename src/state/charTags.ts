@@ -572,7 +572,7 @@ export function findCharTag(name: string): CharTagEntry | undefined {
  * 两套档案都拉进来。
  *
  * **这是「认人」的唯一口径**:中文外貌注入(chineseAppearanceForText)与
- * DSH 渠道的角色提交(roleNamesForText)共用它,两处若各写一套,就会出现
+ * DSH 渠道的角色提交(rolesForText)共用它,两处若各写一套,就会出现
  * 「外貌拼了这个人、提交给 DSH 的名单里却没有他」这种对不上的事。
  */
 export function matchCharTags(text: string): CharTagEntry[] {
@@ -608,12 +608,24 @@ export function matchCharTags(text: string): CharTagEntry[] {
  * 名字必须是 DSH 档案里认得的写法(显示名或别名),否则那一侧会按「角色不存在」报错——
  * 这是有意的:静默跳过会让「图里少了个人」变成一件查不出来的事。
  */
-export function roleNamesForText(text: string): string[] {
-  return matchCharTags(text).map(entry => entry.name.trim()).filter(Boolean);
+/**
+ * 给 DSH 渠道用的角色块清单（旁路通道：DSH 不查自己的档案，直接用这些块）。
+ *
+ * 与 chineseAppearanceForText 的关系:**认人是同一个函数**(matchCharTags)，只是产出不同——
+ * 那边拼一段给人看的中文外貌，这边给出「谁在画面里、长什么样」的英文 tag 块。
+ *
+ * 只收 buildEntryTag 能产出非空串的条目:空块交给 DSH 等于告诉它「这个角色没长相」，
+ * 结果是不注入，还会在回执里被当成「档案缺形象块」报出来。宁可这里就不给。
+ */
+export function rolesForText(text: string): { name: string; charBlock: string }[] {
+  return matchCharTags(text)
+    .map(entry => ({ name: entry.name.trim(), charBlock: buildEntryTag(entry) }))
+    .filter(role => role.name && role.charBlock);
 }
 
+
 export function chineseAppearanceForText(text: string): string {
-  // 认人交给 matchCharTags（与 DSH 渠道的 roleNamesForText 同一个函数），这里只管拼文本。
+  // 认人交给 matchCharTags（与 DSH 渠道的 rolesForText 同一个函数），这里只管拼文本。
   const parts: string[] = [];
   for (const entry of matchCharTags(text)) {
     const zh = (entry.zh ?? '').trim().replace(/[\r\n]+/g, ' ');

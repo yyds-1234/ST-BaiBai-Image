@@ -124,27 +124,35 @@ describe('generateImage: dsh 分支', () => {
     expect(body.source).toEqual({ chatId: 'c1', messageId: 7, slot: 0 });
   });
 
-  it('在场角色名原样进 payload.characters', async () => {
+  it('角色块走 roles 旁路字段，不混进 characters', async () => {
     dshReady();
     acceptThenDone();
     await generateImage({
       prompt: '',
       dsh: '傍晚的天台，林夏靠着栏杆回头',
-      dshCharacters: ['林夏', '陈默'],
+      dshRoles: [
+        { name: '林夏', charBlock: '1girl, long black hair, grey sweater' },
+        { name: '陈默', charBlock: '1boy, short hair' },
+      ],
       size: 'portrait',
       seed: 7,
     });
     const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
-    // 只传名字：形象块 / LoRA / 绑哪条线都由 DSH 自己的 identities 档案决定。
-    // 顺序即出场顺序，第一位站主角位。
-    expect(body.characters).toEqual(['林夏', '陈默']);
+    // roles 与 characters 是两条独立通道：characters 让 DSH 查自己的档案，
+    // roles 是调用方直接给块（DSH 收到就走旁路，不读 identities）。
+    expect(body.roles).toEqual([
+      { name: '林夏', charBlock: '1girl, long black hair, grey sweater' },
+      { name: '陈默', charBlock: '1boy, short hair' },
+    ]);
+    expect(body.characters).toBeUndefined();
   });
 
-  it('角色名单为空时不发这个字段', async () => {
+  it('角色块为空数组时不发这个字段', async () => {
     dshReady();
     acceptThenDone();
-    await generateImage({ prompt: '', dsh: '她站在窗边', dshCharacters: [], size: 'portrait', seed: 1 });
+    await generateImage({ prompt: '', dsh: '她站在窗边', dshRoles: [], size: 'portrait', seed: 1 });
     const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(body.roles).toBeUndefined();
     expect(body.characters).toBeUndefined();
   });
   it('没有 <dsh> 时回落 prompt —— 老 tag 切到本渠道照样能出图', async () => {
