@@ -41,6 +41,7 @@ import { beginImage, failImage, finishImage, patchImagePrompt, safeHistory } fro
 import { copyText } from '@/st/clipboard';
 import { getContext } from '@/st/context';
 import { formatPromptText } from '@/st/imageTagRegex';
+import { describeDshPlaceholder, isDshPlaceholder } from '@/autoTag/dshPlaceholder';
 
 /**
  * 楼层生图卡片(DESIGN-FLOOR-UI.md §8)。
@@ -65,6 +66,8 @@ const props = defineProps<{
   /** tag 原文解析出的动态负面部分(无则空串;生成时写入 %negative_prompt% 占位符)。 */
   negative: string;
   characters: ImageCharacterPrompt[];
+  /** <dsh> 画面占位散文;非空 = 这张走 DSH 写手渠道(提示词由 DSH 侧写)。 */
+  dsh: string;
   /** 画幅方向(模型判定,随 tag 持久化):决定用渠道配置里的竖屏还是横屏尺寸;渠道锁了横竖时以锁为准(见 effectiveSize)。 */
   size: Orientation;
   /** tag 原文(含 <bbi_image> 壳):生成提交与 promptHash 的输入。 */
@@ -151,6 +154,12 @@ const retryInfo = computed(() => record.value?.retry ?? null);
 
 const comfyActive = computed(() => settings.defaultBackend === 'comfyui');
 const naiActive = computed(() => settings.defaultBackend === 'nai');
+/** DSH 写手渠道。三者互斥,判据只有 settings.defaultBackend 一处。 */
+const dshActive = computed(() => settings.defaultBackend === 'dshbridge');
+/** 这条 tag 是不是一条 DSH 占位(与当前选的是哪个后端无关;判据在 autoTag/dshPlaceholder.ts)。 */
+const isDshSlot = computed(() => isDshPlaceholder({ dsh: props.dsh }));
+/** 占位卡片副标题:告诉用户「这张不是直接出图,是交给 DSH 写串」。 */
+const dshSubtitle = computed(() => (isDshSlot.value ? describeDshPlaceholder(props.dsh) : ''));
 /**
  * 后端是否已配齐(决定给「生成图片」按钮还是配置引导)。
  * 判据在 generate.ts 的 backendStatus 里,与真正出图、与公开接口同源——
@@ -176,6 +185,7 @@ const current = computed(() => liveHistory.value[index.value] ?? null);
 const promptText = computed(() =>
   formatPromptText({
     tag: props.prompt,
+    dsh: props.dsh,
     nl: props.nl,
     negative: props.negative,
     characters: props.characters,
@@ -243,18 +253,20 @@ const barText = computed(() => {
   if (planning.value) return 'AI 重写提示词…';
   if (busy.value) return statusLabel.value;
   if (phase.value === 'error') return error.value || '生成失败';
-  if (shownEntry.value) return props.prompt || props.nl || '图片';
+  if (shownEntry.value) return props.prompt || props.nl || props.dsh || '图片';
   if (filesGone.value) return '图片文件已删除';
-  return '待生成';
+  // 占位卡片没有 tag 可显示,给副标题的那句话(「DSH 写手 · N 字画面描述」),
+  // 否则折叠态一收就只剩「待生成」,看不出这张是交给 DSH 的
+  return dshSubtitle.value || '待生成';
 });
 
 /** 无图且后端未就绪时,占位区中央的配置引导。 */
 const pendingHint = computed(() => {
-  if (!comfyActive.value && !naiActive.value)
+  if (!comfyActive.value && !naiActive.value && !dshActive.value)
     return '出图后端未选择,请到柏宝绘「渠道」页选择出图渠道';
-  return naiActive.value
-    ? '未配置 NAI,请到柏宝绘「渠道」页填写 API Key'
-    : '未配置 ComfyUI,请到柏宝绘「渠道」页填写工作流';
+  if (naiActive.value) return '未配置 NAI,请到柏宝绘「渠道」页填写 API Key';
+  if (dshActive.value) return '未填写 DSH 桥接地址,请到柏宝绘「渠道」页补上';
+  return '未配置 ComfyUI,请到柏宝绘「渠道」页填写工作流';
 });
 
 async function generate(): Promise<void> {
@@ -276,8 +288,16 @@ async function generate(): Promise<void> {
     negative: props.negative,
     characters: props.characters.map(character => ({ ...character })),
     size: effectiveSize.value,
+    // DSH 占位:散文与角色名一起带上。角色名取 <characters> 里的(占位模式通常没有),
+    // 但 charactersFrom='manual' 时以面板手填为准——那由 generate.ts 之外的渠道设置决定,
+    // 这里只负责把「正文里认出来的」交上去。
+    dsh: props.dsh,
+    dshCharacters: dshActive.value ? [...props.characters.map(character => character.name)] : [],
+    source: { chatId: props.chatId, messageId: props.messageId, slot: props.seq },
   };
-  // NAI 需要闸门排队 → 先显示「排队中」;ComfyUI 有服务端队列,直接进 generating
+  // NAI 需要闸门排队 → 先显示「排队中」;ComfyUI 有服务端队列,直接进 generating;
+  // DSH 写手要现写串再出图,耗时更像 NAI,但 DSH 侧不排队 —— 仍按 generating 起步,
+  // 免得卡片先报几秒「排队中」再跳回去(用户会以为两个任务在跑)。
   const { signal, token } = beginGen(slot, currentHash, naiActive.value ? 'queued' : 'generating');
   // 历史记录 id:在 seed 确定后才登记(见下),故这里先置空,catch 里据此判断要不要收尾。
   let historyId: number | null = null;
@@ -290,8 +310,12 @@ async function generate(): Promise<void> {
     // 且图随后就落盘进 ST 了)——只留元信息 + 楼层坐标,够回溯「这张图是怎么来的」。
     historyId = safeHistory(() =>
       beginImage({
-        backend: naiActive.value ? 'nai' : 'comfyui',
-        model: naiActive.value ? settings.nai.model : activeComfyPreset().name,
+        backend: naiActive.value ? 'nai' : dshActive.value ? 'dshbridge' : 'comfyui',
+        model: naiActive.value
+          ? settings.nai.model
+          : dshActive.value
+            ? settings.dshBridge.configSet.trim() || 'DSH 默认配置集'
+            : activeComfyPreset().name,
         prompt: job.prompt,
         nl: job.nl,
         negative: job.negative,
@@ -382,8 +406,11 @@ function openEditor(): void {
       seq: props.seq,
       rawTag: props.tag,
     },
+    // dsh 必须原样带回:弹窗只编辑五个结构化字段,没给编辑的也照样写回,
+    // 漏了它等于「打开看一眼再保存」就把这条占位降级成空 tag(promptHash 也跟着变)
     content: {
       tag: props.prompt,
+      dsh: props.dsh,
       nl: props.nl,
       negative: props.negative,
       characters: props.characters.map(character => ({ ...character })),
@@ -540,9 +567,12 @@ onMounted(() => {
       <div v-if="!imageSrc && !busy" class="bbi-figure__pending">
         <button v-if="configured" class="bbi-figure__generate" type="button" @click="generate">
           <Icon name="palette" :size="15" />
-          {{ phase === 'error' ? '重试' : '生成图片' }}
+          {{ phase === 'error' ? '重试' : isDshSlot ? '交给 DSH 出图' : '生成图片' }}
         </button>
         <p v-else class="bbi-figure__hint">{{ pendingHint }}</p>
+        <!-- 占位卡片副标题:说清这张不是直接出图,而是把散文交给 DSH 写串。
+             不加这一行,用户看到一张只有「生成图片」的空白卡片会以为是坏了。 -->
+        <p v-if="configured && dshSubtitle" class="bbi-figure__hint">{{ dshSubtitle }}</p>
       </div>
 
       <!-- 提示词已改:角标提示,不再整图压暗 -->

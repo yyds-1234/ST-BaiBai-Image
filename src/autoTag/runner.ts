@@ -212,6 +212,19 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     abort(floor, 'chat-excluded', opts.manual, '该角色已被排除，不生成生图 tag');
     return;
   }
+  // DSH 写手渠道下,占位由**主模型**自己写(autoTag/dshPlaceholder.ts 的世界书条目),
+  // 柏宝绘再发一次 LLM 请求去写 tag 是纯浪费:那一轮请求产出的 tag 插不进占位模式,
+  // 而用户点「生成」要的是把 <dsh> 交给 DSH。手动按钮也一并拦下并说清原因——
+  // 静默不做事在用户那里就是「按钮坏了」。
+  if (settings.defaultBackend === 'dshbridge') {
+    abort(
+      floor,
+      'dsh-bridge-mode',
+      opts.manual,
+      '当前是「DSH 写手」渠道，画面占位由主模型按世界书条目写入，不需要自动生成 tag',
+    );
+    return;
+  }
   const message = context.chat[floor];
   const messageDiagnostic = message
     ? {

@@ -24,6 +24,7 @@
 
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import { comfySimpleParams, validateSimpleConfig } from '@/backends/comfyTemplates';
+import { generateDshImage } from '@/backends/dshBridge';
 import { generateComfyImage, previewComfyPrompt, randomSeed, type ComfyImageResult } from '@/backends/comfyui';
 import {
   fullNegativePrompt,
@@ -35,7 +36,7 @@ import {
 import { effectiveOrientation, parseSize, pickSize, type Orientation } from '@/backends/size';
 import { acquireNaiSlot } from '@/floor/genQueue';
 import type { GenerationMeta } from '@/generationMeta';
-import { activeComfyPreset, activeNaiEndpoint, activeOrientationLock, effectiveComfyConn, effectiveNai, settings, type BackendId } from '@/state/settings';
+import { activeComfyPreset, activeNaiEndpoint, activeOrientationLock, effectiveComfyConn, effectiveDshBridge, effectiveNai, settings, type BackendId } from '@/state/settings';
 
 /** 一次生成的输入。与协议层 ImageInsertion 同形,但不含正文位置信息。 */
 export interface GenerateInput {
@@ -59,6 +60,24 @@ export interface GenerateInput {
   size?: Orientation;
   /** 本次种子。由调用方经 decideSeed() 先行确定(埋点要在发请求前拿到它)。 */
   seed: number;
+  /**
+   * DSH 写手渠道的画面占位散文(<dsh> 子标签内容)。
+   *
+   * 有值且当前后端是 dshbridge 时,它与 prompt/nl 是**互斥**的两条路:占位模式下
+   * prompt 往往是空串(主模型只写散文,没有 danbooru tag),故不能拿 prompt 当场景。
+   * 后端不是 dshbridge 时本字段被忽略——一张带 <dsh> 的卡片切到 ComfyUI 渠道后,
+   * 仍按 prompt/nl 老路径出图,不至于点了没反应。
+   */
+  dsh?: string;
+  /** 占位里出现的角色名(DSH 侧按自己的档案解析;这里只是把线索带过去)。 */
+  dshCharacters?: string[];
+  /**
+   * 纯诊断坐标 { chatId, messageId, slot }。只有 DSH 渠道会用到(它写进自己的 runs.jsonl)。
+   *
+   * 由调用方传而不是本模块自己取:本模块刻意不认识楼层坐标(见文件头),而卡片那边
+   * 本来就有这三个值,顺手带上比在这里反向 import 一套 chat 上下文干净得多。
+   */
+  source?: Record<string, unknown>;
 }
 
 /** 生成过程中的进度上报(卡片用它显示排队位置与退避进度)。 */
@@ -183,6 +202,22 @@ export function backendStatus(): BackendStatus {
     return { ...base, configured: true, reason: '' };
   }
 
+  if (backend === 'dshbridge') {
+    // DSH 侧不传 characters(它自己按档案与 line 门禁解析),故恒 false:
+    // 第三方据此决定要不要提示用户换后端,与 ComfyUI 同一口径。
+    const base = {
+      backend,
+      model: settings.dshBridge.configSet.trim() || 'DSH 默认配置集',
+      supportsCharacters: false,
+    };
+    if (!settings.dshBridge.url.trim()) {
+      return { ...base, configured: false, reason: '未填写 DSH 桥接地址' };
+    }
+    // 令牌是可选的(DSH 未启用校验时不用填),故**不**作为就绪条件:
+    // 把它当必需品会让绝大多数没开令牌的用户看到「未配置」却不知道要填什么。
+    return { ...base, configured: true, reason: '' };
+  }
+
   // webui 只剩存量类型(设置迁移会把它归一成 comfyui/nai),真出现就是「没选后端」
   return {
     backend,
@@ -226,6 +261,7 @@ export async function generateImage(
   if (!status.configured) throw new Error(status.reason || '出图后端未配置');
 
   const isNai = status.backend === 'nai';
+  const isDsh = status.backend === 'dshbridge';
   const characters = input.characters ?? [];
   // 支持与否由后端说了算:ComfyUI 恒不支持;NAI 看模型是否 4.5/V5
   const charactersApplied = characters.length > 0 && status.supportsCharacters;
@@ -246,7 +282,61 @@ export async function generateImage(
     // 差一个字段,历史里记的就不是真正发出去的东西了。
     let finalPrompt = '';
     let finalNegative = '';
-    if (isNai) {
+    if (isDsh) {
+      // DSH 写手:柏宝绘不拼提示词,只把画面散文原样送过去。故这里**没有** onPrompt 预览
+      // ——成品串是 DSH 写出来的,发请求前根本不存在,硬编一个假的只会让历史记错。
+      // 真串在回包里(prompt 字段),拿到后再通过 finalPrompt 补录。
+      //
+      // 场景来源:优先 <dsh> 占位;占位为空时回落 prompt,这样把同一条卡片切到老 tag 上
+      // 也能出图(否则「换了后端,卡片点什么都没反应」)。
+      const scene = (input.dsh ?? '').trim() || input.prompt.trim();
+      if (!scene) throw new Error('这条占位没有画面描述,无法交给 DSH');
+      const conn = effectiveDshBridge();
+      const output = await generateDshImage(
+        conn,
+        {
+          scene,
+          characters: input.dshCharacters?.length ? input.dshCharacters : undefined,
+          size,
+          negative: input.negative,
+          seed: input.seed,
+          source: input.source,
+        },
+        signal,
+        // 轮询进度直接借 onQueue 那条已经在用的通道（卡片会显示「排队中」位置）：
+        // 不新开 UI 概念，出图阶段的变化就能看见。
+        {
+          onStage: (_stage, label) => {
+            if (label === 'DSH 入队' || label === '完成' || label === '失败') return;
+            try {
+              progress.onQueue?.(null);
+            } catch {
+              // 进度回调失败不能影响出图。
+            }
+          },
+        },
+      );
+      result = output;
+      // DSH 回了成品串就用它(那是「这次究竟发了什么」的唯一真相);没回就记散文本身,
+      // 至少比一个空串更能说明这张图画的是什么。
+      finalPrompt = output.prompt.trim() || scene;
+      finalNegative = output.negative || input.negative || '';
+      reportPrompt(progress, finalPrompt, finalNegative);
+      meta = {
+        backend: 'dshbridge',
+        model: status.model,
+        width: output.width,
+        height: output.height,
+        positive: finalPrompt,
+        negative: finalNegative,
+        artist: null,
+        vibes: [],
+        // 采样参数全在 DSH 侧的配置集里,柏宝绘这边一个都看不到——故留空。
+        // 硬填一个(比如把配置集 id 写进 template)会让「模型/模板」两行显示成一件事,
+        // 排查时反而误以为是我们自己组装的模板。
+        params: {},
+      };
+    } else if (isNai) {
       const nai = effectiveNai();
       // 先算成品再发请求:与 backends/nai 内部同一对纯函数(fullPositivePrompt /
       // fullNegativePrompt),同一份 nai 快照 —— 所以这里算出的就是真正发出去的那条。

@@ -2,6 +2,7 @@
 import { BACKENDS, settings, type BackendId } from '@/state/settings';
 import { computed, ref, watch, type Component } from 'vue';
 import ComfyUIPanel from './panels/ComfyUIPanel.vue';
+import DshBridgePanel from './panels/DshBridgePanel.vue';
 import NaiPanel from './panels/NaiPanel.vue';
 import WebUIPanel from './panels/WebUIPanel.vue';
 
@@ -40,9 +41,12 @@ watch(viewing, v => {
   }
 });
 
+// Record<BackendId, …> 是穷尽类型:新增后端不加这一项,编译就会报缺键,
+// 比运行期「页签点了却是空白面板」早得多暴露出来。
 const PANELS: Record<BackendId, Component> = {
   webui: WebUIPanel,
   comfyui: ComfyUIPanel,
+  dshbridge: DshBridgePanel,
   nai: NaiPanel,
 };
 const activePanel = computed(() => PANELS[viewing.value]);

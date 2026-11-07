@@ -169,6 +169,7 @@ export function hydrateMessage(messageId: number, ctx: STContext): void {
               nl: content.nl,
               negative: content.negative,
               characters: content.characters,
+              dsh: content.dsh ?? '',
               size: content.size,
               tag: tags[seq],
               messageId,

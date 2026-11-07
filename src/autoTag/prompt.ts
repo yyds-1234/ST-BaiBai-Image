@@ -126,6 +126,11 @@ function backendPromptSpec(
   naiCharPromptsOn: boolean,
   dialect: SpecDialect,
 ): string {
+  // dshbridge 不附加任何书写规范:那条线的规范活在 DSH 侧的配置集里,提示词由 DSH 写。
+  // 这里若回落成 ComfyUI 那份,模型会被要求输出本渠道根本不解析的 danbooru tag。
+  // (正常情况下 runner 已在该渠道下直接跳过整个链路,这里是第二道闸:直接调用
+  //  buildAutoTagMessages 的代码与测试不该因此拿到一份自相矛盾的规范。)
+  if (settings.defaultBackend === 'dshbridge') return '';
   if (settings.defaultBackend === 'comfyui') {
     // MOSS 写实线整份换规范,不挂 {{nl}} 宏也不追加 NL 规范段:那份文本本身就要求必写 nl,
     // 而 DEFAULT_COMFY_NL_SPEC 讲的是「tag 之外再加一段 nl」的 tag 流口径,混进去会自相矛盾。
@@ -168,6 +173,8 @@ function backendThinkingPrompt(
   naiCharPromptsOn: boolean,
   dialect: SpecDialect,
 ): string {
+  // 同 backendPromptSpec:与规范一一配对,规范没有就给空,思维链也不能凭空出现
+  if (settings.defaultBackend === 'dshbridge') return '';
   if (settings.defaultBackend === 'nai') {
     const template = naiCharPromptsOn
       ? (options.prompts?.naiV5Thinking ?? '').trim() || DEFAULT_NAI_V5_THINKING

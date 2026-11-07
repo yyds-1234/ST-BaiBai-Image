@@ -78,7 +78,11 @@ export interface GenerationParams {
 
 /** 随图落盘的完整出图元信息。 */
 export interface GenerationMeta {
-  backend: 'nai' | 'comfyui';
+  /**
+   * 出图后端。dshbridge = 画面串由 DSH 侧的配置集写,柏宝绘这边只看到最终成品串。
+   * 刻意用字面量联合而不是 import BackendId:本模块必须零 import(见文件头,否则成环)。
+   */
+  backend: 'nai' | 'comfyui' | 'dshbridge';
   /** NAI 模型名 / ComfyUI 工作流预设名。vibe 编码按模型分组，必须一起记。 */
   model: string;
   /** 实际发给后端的画幅像素；0 = 由工作流自带尺寸（ComfyUI 未解析出时）。 */

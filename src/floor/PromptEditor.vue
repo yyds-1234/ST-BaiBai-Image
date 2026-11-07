@@ -73,6 +73,12 @@ const emit = defineEmits<{
 const open = ref(false);
 
 const tag = ref(props.content.tag);
+/**
+ * DSH 占位的画面散文。它**不可在这里编辑**,但必须原样带回:
+ * 弹窗只编辑五个结构化字段,没给编辑的字段静默丢掉就等于「打开看一眼再保存,
+ * 这条占位被抹成空 tag」——而 promptHash 吃原文,老图会集体变成「旧提示词」。
+ */
+const dsh = ref(props.content.dsh ?? '');
 const nl = ref(props.content.nl);
 const negative = ref(props.content.negative);
 const size = ref<Orientation>(props.content.size);
@@ -115,6 +121,7 @@ function oneLine(text: string): string {
 /** 草稿归一后的结果 —— 保存与「有没有改」都以它为准,两处不能各算一次。 */
 const draft = computed<ImageTagContent>(() => ({
   tag: oneLine(tag.value),
+  dsh: oneLine(dsh.value),
   nl: oneLine(nl.value),
   negative: oneLine(negative.value),
   characters: characters.value
@@ -146,6 +153,7 @@ const dirty = computed(() => {
   const next = draft.value;
   return (
     next.tag !== props.content.tag ||
+    next.dsh !== props.content.dsh ||
     next.nl !== props.content.nl ||
     next.negative !== props.content.negative ||
     next.size !== props.content.size ||
@@ -156,9 +164,12 @@ const dirty = computed(() => {
 /** 校验:tag 必填 + 全字段禁含子标签字面量(口径与 AI 侧同一份)。 */
 const error = computed(() => {
   const next = draft.value;
-  if (!next.tag) return '画面 tag 不能为空';
+  // DSH 占位里 tag 本就是空的(散文就是全部内容),此时改成要求散文非空,
+  // 否则占位卡片一打开编辑弹窗就顶着红字、点不动「应用」
+  if (!next.tag && !next.dsh) return '画面 tag 不能为空';
   const fields: Array<[string, string]> = [
     ['画面 tag', next.tag],
+    ['画面描述', next.dsh ?? ''],
     ['自然语言', next.nl],
     ['负面提示词', next.negative],
   ];
@@ -167,7 +178,7 @@ const error = computed(() => {
   }
   for (const [label, value] of fields) {
     if (value && containsTagMarkup(value)) {
-      return `${label}不能包含 <bbi_image> / <tag> / <nl> / <negative> / <characters> / <size> 标签`;
+      return `${label}不能包含 <bbi_image> / <tag> / <dsh> / <nl> / <negative> / <characters> / <size> 标签`;
     }
   }
   return '';
@@ -187,6 +198,7 @@ watch(
   () => props.content,
   next => {
     tag.value = next.tag;
+    dsh.value = next.dsh ?? '';
     nl.value = next.nl;
     negative.value = next.negative;
     size.value = next.size;

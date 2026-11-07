@@ -171,7 +171,7 @@ export function stripImageTags(mes: string): string {
  * 内容里混进一个 `</bbi_image>` 就会让 tag 提前截断、后半截漏进 DOM 与提示词，
  * 正好破掉「tag 永不进 DOM、永不进提示词」这条不变式。
  */
-export const FORBIDDEN_SUBTAG = /<\/?(?:bbi_image|tag|nl|negative|characters|size)\b/i;
+export const FORBIDDEN_SUBTAG = /<\/?(?:bbi_image|tag|nl|negative|characters|size|dsh)\b/i;
 
 /** 文本里是否含 bbi_image 子标签字面量（手输校验用；口径同 AI 侧）。 */
 export function containsTagMarkup(text: string): boolean {
@@ -181,6 +181,18 @@ export function containsTagMarkup(text: string): boolean {
 export interface ImageTagContent {
   /** danbooru 短 tag 部分：显式 <tag> 子标签内容，或剔除子标签后的裸文本（存量格式）。 */
   tag: string;
+  /**
+   * DSH 写手占位：<dsh> 子标签里的中文散文（人物 / 场景 / 动作 / 光线）。
+   *
+   * 它不是提示词，而是「这一张交给 DSH 去写串」的委派书——DSH 侧用配置集规范把它
+   * 写成成品画面串。故它与 tag/nl 互斥：写了 dsh 的 tag 走 DSH 渠道，
+   * 没写的老 tag 照旧走 ComfyUI / NAI。缺省空串 = 老格式，行为与改动前逐字一致。
+   *
+   * 类型上刻意**可选**：parseImageTagContent 出来的对象里它恒为字符串(没有就是 '')，
+   * 但构造侧(手写对象、老调用点)不必逐个补一个空串 —— 少一处必填，就少一类
+   * 「升级时把无关测试全改一遍」的噪声。序列化与展示两处都按空串兜底。
+   */
+  dsh?: string;
   /** 自然语言部分：<nl> 子标签内容，无则空串。 */
   nl: string;
   /** 本画面动态负面 tag：<negative> 子标签内容，无则空串。 */
@@ -202,6 +214,9 @@ export function parseImageTagContent(raw: string): ImageTagContent {
   // 内容统一折叠成单行:手写 tag 可能跨行,而提示词里换行没有意义
   const oneLine = (text: string) => text.trim().replace(/[\r\n]+/g, ' ');
   const inner = raw.replace(/^<bbi_image[^>]*>/i, '').replace(/<\/bbi_image>$/i, '');
+  // <dsh> 与 <nl> 同批先剥:它的正文是中文散文,漏进 tag 就会被当成 danbooru 词发出去
+  const dshMatch = inner.match(/<dsh>([\s\S]*?)<\/dsh>/i);
+  const dsh = dshMatch ? oneLine(dshMatch[1]) : '';
   const nlMatch = inner.match(/<nl>([\s\S]*?)<\/nl>/i);
   const nl = nlMatch ? oneLine(nlMatch[1]) : '';
   const negativeMatch = inner.match(/<negative>([\s\S]*?)<\/negative>/i);
@@ -228,6 +243,7 @@ export function parseImageTagContent(raw: string): ImageTagContent {
   const sizeMatch = inner.match(/<size>([\s\S]*?)<\/size>/i);
   const size = normalizeOrientation(sizeMatch ? oneLine(sizeMatch[1]) : '');
   const withoutSubTags = inner
+    .replace(/<dsh>[\s\S]*?<\/dsh>/gi, '')
     .replace(/<nl>[\s\S]*?<\/nl>/gi, '')
     .replace(/<negative>[\s\S]*?<\/negative>/gi, '')
     .replace(/<characters>[\s\S]*?<\/characters>/gi, '')
@@ -237,11 +253,16 @@ export function parseImageTagContent(raw: string): ImageTagContent {
     .filter(Boolean);
   const bare = oneLine(withoutSubTags.replace(/<tag>[\s\S]*?<\/tag>/gi, ''));
   const tag = [...(bare ? [bare] : []), ...explicit].join(', ');
-  return { tag, nl, negative, characters, size };
+  // dsh 只在**真有** <dsh> 时才出现在结果里:老 tag 解析出的对象必须与改动前逐键相同
+  // (既有测试用 toEqual 锁着这条,多一个恒为空串的键就是一次无声的契约变更)。
+  return { tag, nl, negative, characters, size, ...(dsh ? { dsh } : {}) };
 }
 
 /**
  * 序列化成 tag 原文（含 <bbi_image> 壳）—— parseImageTagContent 的反向操作。
+ *
+ * 子标签顺序固定为 tag → dsh → nl → negative → characters → size：dsh 紧跟 tag，
+ * 因为两者是「同一张图的两种写法」，读正文的人一眼能看出这条走哪条后端。
  *
  * **格式的读与写只有这一份**：注入(autoTag/protocol.ts 的 injectImageTags)与手动编辑
  * (floor/promptEditor.ts)共用，两处漂移会让「解析得到的字段」与「落进正文的原文」对不上，
@@ -251,12 +272,13 @@ export function parseImageTagContent(raw: string): ImageTagContent {
  * size **恒写出**：生成是延后的(点卡片才出图)，方向必须随 tag 持久化在正文里。
  */
 export function serializeImageTag(content: ImageTagContent): string {
+  const dsh = content.dsh ? `<dsh>${content.dsh}</dsh>` : '';
   const nl = content.nl ? `<nl>${content.nl}</nl>` : '';
   const negative = content.negative ? `<negative>${content.negative}</negative>` : '';
   const characters = content.characters.length
     ? `<characters>${JSON.stringify(content.characters)}</characters>`
     : '';
-  return `<bbi_image>${content.tag}${nl}${negative}${characters}<size>${content.size}</size></bbi_image>`;
+  return `<bbi_image>${content.tag}${dsh}${nl}${negative}${characters}<size>${content.size}</size></bbi_image>`;
 }
 
 /**
@@ -269,10 +291,13 @@ export function serializeImageTag(content: ImageTagContent): string {
  * size 刻意不出现:它是画幅方向，不是提示词内容，卡片上也从来不显示。
  */
 export function formatPromptText(
-  content: Pick<ImageTagContent, 'tag' | 'nl' | 'negative' | 'characters'>,
+  content: Pick<ImageTagContent, 'tag' | 'nl' | 'negative' | 'characters'> & { dsh?: string },
 ): string {
   return [
     content.tag,
+    // dsh 占位不是提示词而是「画面描述」,但它就是这条 tag 的全部内容,
+    // 卡片与图库都得看得见——排在 tag 之后、nl 之前,与序列化顺序一致。
+    content.dsh ?? '',
     content.nl,
     ...content.characters.map(character =>
       [`角色: ${character.name}`, character.tag, character.nl].filter(Boolean).join('\n'),

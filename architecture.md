@@ -56,7 +56,8 @@ src/
 │   ├── bookMemory.ts  # 读「柏宝书」全局 API,解析成角色参考块
 │   ├── charAnchors.ts # 角色库:库文本注入 → 兜底替换残留 @占位符(AI 照抄字段值,不用占位符)
 │   ├── rebase.ts      # 插入位置重定位:请求时正文 → 落盘时正文(文本 LCS 骨架 + 顺延)
-│   └── slotPlan.ts    # 单槽重写提示备注(只重写第 N 张 + 当前提示词锚点 + 其余画面清单)
+│   ├── slotPlan.ts    # 单槽重写提示备注(只重写第 N 张 + 当前提示词锚点 + 其余画面清单)
+│   └── dshPlaceholder.ts # DSH 写手占位:世界书条目正文 + <dsh> 判定/构造/展示(纯数据,无 IO)
 ├── backends/          # 出图后端(链路 B 的生成端)+ 共享尺寸工具
 │   ├── comfyui.ts     # ComfyUI:工作流模板 %占位符% 渲染、浏览器直连/ST 转发自动回退
 │   ├── comfyTemplates.ts # 简易模式:模板族(checkpoint/flux/anima/moss) + 参数组装 API JSON(无占位符)
@@ -70,6 +71,8 @@ src/
 │   ├── chatu8Vibe.ts  # 从智绘姬(st-chatu8)只读导入 vibe / 提示词预设
 │   │                  # (collect/detect/import 纯函数三件套,绝不写回智绘姬)
 │   ├── vibeGroups.ts  # Vibe 分组纯逻辑(装箱 key/归拢/搜索/启用集合判定)
+│   ├── dshBridge.ts   # ★ DSH 写手:把画面占位 POST 给本机 dsh-story-image,收回 base64
+│   │                  # 折成 ComfyImageResult(dataURL);契约真源 docs/DSH-BRIDGE-PROTOCOL.md
 │   └── size.ts        # 画幅方向归一 / 尺寸解析 / 按方向取配置 / 画幅锁(effectiveOrientation)
 │                      # (刻意不 import settings)
 ├── generate.ts        # ★ 一次出图的共用中段:NAI 闸门 → 按后端分派 → 拿到图。
@@ -106,7 +109,7 @@ src/
 │   └── card.css       # 卡片样式(取 --bbi-* 令牌,与设置窗口同一套设计语言)
 ├── pages/             # 主窗口的分页(注册表在 pages/registry.ts)
 │   ├── backend/index.vue      # 「渠道」页:页签(webui 已隐藏)+ 各后端面板
-│   │   └── panels/            # ComfyUIPanel / NaiPanel / WebUIPanel(隐藏,代码保留)/ NaiArtistManager
+│   │   └── panels/            # ComfyUIPanel / NaiPanel / DshBridgePanel / WebUIPanel(隐藏,保留)/ NaiArtistManager
 │   ├── characters/index.vue   # 「角色管理」页:全局/本聊天两区卡片式外貌库 CRUD + 历史回滚
 │   ├── gallery/index.vue      # 「图库」页:按角色名分组浏览 user/images/柏宝绘_<角色名>/(放大+看提示词+另存;多选删除**只删文件不碰聊天记录**,分组体积逐张 HEAD 量但 ⚠ 已暂时禁用)
 │   ├── history/index.vue      # 「请求历史」页:调试辅助(LLM 提示词/响应/生图元信息)
@@ -1043,6 +1046,8 @@ API 对象 `Object.freeze`,一个插件改不动下一个插件拿到的东西�
 | 思考强度(渠道弹窗 + custom 源请求体) | src/state/settings.ts 的 `ApiChannel.reasoningEffort` + api/client.ts 的 `buildRequestBody`(UI 在 settings/index.vue) |
 | 跟随主 API | src/api/client.ts 的 requestViaMainApi |
 | ComfyUI 工作流 / 出图 / 通道回退 | src/backends/comfyui.ts |
+| DSH 写手渠道(占位 → DSH 写串出图) | src/backends/dshBridge.ts(协议真源 docs/DSH-BRIDGE-PROTOCOL.md;分派在 generate.ts;面板 DshBridgePanel.vue) |
+| DSH 占位格式 / 世界书条目文本 | src/autoTag/dshPlaceholder.ts(`<dsh>` 子标签;解析在 st/imageTagRegex.ts) |
 | ComfyUI 简易模式(模板组装/校验) | src/backends/comfyTemplates.ts(UI 在 ComfyUIPanel.vue) |
 | MOSS 写实线(模板族 / 固定负面 / 采样器锁) | src/backends/comfyTemplates.ts(`COMFY_TEMPLATES.moss` / `MOSS_DEFAULT_NEGATIVE` / `buildMossWorkflow`;UI 在 ComfyUIPanel.vue) |
 | 提示词规范方言(comfy tag 流 / moss 散文流) | src/state/settings.ts 的 `SpecDialect` + `ComfyWorkflowPreset.specDialect`;选择在 autoTag/prompt.ts 的 `autoTagProfile` / `backendPromptSpec` |

@@ -17,6 +17,7 @@ import {
   vibeFingerprint,
   vibeMetaFromData,
 } from '@/backends/vibeStore';
+import type { DshBridgeConn } from '@/backends/dshBridge';
 import { getContext } from '@/st/context';
 import { reactive, watch } from 'vue';
 
@@ -27,11 +28,13 @@ import { reactive, watch } from 'vue';
  */
 
 /** 生图后端 */
-export type BackendId = 'webui' | 'comfyui' | 'nai';
+export type BackendId = 'webui' | 'comfyui' | 'dshbridge' | 'nai';
 // 顺序即展示顺序(渠道页页签 / 设置页出图后端下拉):NAI 用户最多,排最前;webui 隐藏但保留。
+// dshbridge 排在 comfyui 之后:它是「把活交给本机 DSH」的那条路,本地后端的邻居。
 export const BACKENDS: { value: BackendId; label: string }[] = [
   { value: 'nai', label: 'NAI' },
   { value: 'comfyui', label: 'ComfyUI' },
+  { value: 'dshbridge', label: 'DSH 写手' },
   { value: 'webui', label: 'WebUI' },
 ];
 
@@ -125,6 +128,25 @@ export interface ComfyUISettings extends BackendConn {
   workflows: ComfyWorkflowPreset[];
   /** 当前使用的工作流 id;指向已删条目时由 normalize 回落到第一条。 */
   activeWorkflowId: string;
+}
+
+/**
+ * DSH 写手渠道:把画面占位交给本机 DSH 的 dsh-story-image 插件,由它写成品串并出图。
+ *
+ * 与 ComfyUI / NAI 的差别在**职责划分**上:那两个后端要求柏宝绘自己把提示词拼好,
+ * 这个后端只要一段中文画面描述——提示词工程(配置集规范、风格档、形象块)全在 DSH 侧,
+ * 故这里的字段只有「怎么连」与「用哪套配置集」,没有任何提示词或采样参数。
+ *
+ * 字段契约见 docs/DSH-BRIDGE-PROTOCOL.md;连接形状(前五项)与 backends/dshBridge.ts 的
+ * DshBridgeConn 同源,故直接 extends,不抄第二份。
+ */
+export interface DshBridgeSettings extends DshBridgeConn {
+  /**
+   * 角色名从哪里来。
+   * - prompt:从 <characters> 子标签或正文里认(默认,占位模式下通常没有 characters);
+   * - manual:只用面板里手填的名字(留给「正文里叫别的名字、档案里叫这个」的场合)。
+   */
+  charactersFrom: 'prompt' | 'manual';
 }
 
 /**
@@ -1407,6 +1429,8 @@ export interface ImageSettings {
   /** 后端连接配置 */
   webui: BackendConn;
   comfyui: ComfyUISettings;
+  /** DSH 写手渠道(占位模式;提示词工程在 DSH 侧,这里只有连接与配置集)。 */
+  dshBridge: DshBridgeSettings;
   nai: NaiSettings;
   /** 副 API 渠道列表(镜像共享存储;真身在 extensionSettings['baibai_api_channels']) */
   channels: ApiChannel[];
@@ -1542,6 +1566,28 @@ function naiDefaults(): NaiSettings {
   };
 }
 
+/** DSH 桥接的默认基址(dsh-story-image 插件挂的路由,见协议 §0)。 */
+const DSH_BRIDGE_DEFAULT_URL = 'http://127.0.0.1:3080/story-image-bridge';
+/** 默认超时:ComfyUI 出图本身几十秒,加上 DSG 侧写串的一次 LLM 调用,180s 是保守值。 */
+const DSH_BRIDGE_DEFAULT_TIMEOUT_MS = 180000;
+
+/**
+ * DSH 写手默认值。
+ *
+ * configSet 默认空串 = 用 DSH 侧的默认配置集:那一侧才知道用户装了哪几套,
+ * 这里预填一个 id 只会在用户改名/删集之后变成一个不存在的引用。
+ */
+function dshBridgeDefaults(): DshBridgeSettings {
+  return {
+    url: DSH_BRIDGE_DEFAULT_URL,
+    token: '',
+    timeoutMs: DSH_BRIDGE_DEFAULT_TIMEOUT_MS,
+    configSet: '',
+    count: 1,
+    charactersFrom: 'prompt',
+  };
+}
+
 function defaults(): ImageSettings {
   return {
     enabled: true,
@@ -1563,6 +1609,7 @@ function defaults(): ImageSettings {
     defaultBackend: 'comfyui',
     webui: backendDefaults('http://127.0.0.1:7860'),
     comfyui: comfyDefaults(),
+    dshBridge: dshBridgeDefaults(),
     nai: naiDefaults(),
     channels: [],
     assignments: { tagGen: '' },
@@ -1704,6 +1751,8 @@ export function activeLayoutLock(): LayoutLock {
 export function activeOrientationLock(): OrientationLock {
   if (settings.defaultBackend === 'nai') return settings.nai.orientationLock;
   if (settings.defaultBackend === 'comfyui') return activeComfyPreset().orientationLock;
+  // dshbridge 刻意**不提供**画幅锁:像素由 DSH 侧的配置集决定,这里再锁一道会出现
+  // 「面板说锁竖、DSH 按横出」这种两端各说各话的状态。方向只由占位里的 <size> 表达。
   return 'auto';
 }
 
@@ -1756,6 +1805,23 @@ export function activeNaiArtist(): NaiArtistPreset | null {
 export function activeNaiEndpoint(): NaiEndpoint {
   const list = settings.nai.endpoints;
   return list.find(e => e.id === settings.nai.activeEndpointId) ?? list[0] ?? officialNaiEndpoint();
+}
+
+/**
+ * 出图/测试连接/探活用的 DSH 桥接连接。与 effectiveComfyConn / effectiveNai 同构:
+ * 后端层只该知道「这一次往哪儿发、用哪套配置集」,不该知道用户存了整个 settings。
+ * 目前字段一一对应(DshBridgeSettings extends DshBridgeConn),仍然单列一份——
+ * 日后给它加上渠道级的东西(比如本地的画幅锁)时,这条边界不用重新划。
+ */
+export function effectiveDshBridge(): DshBridgeConn {
+  const d = settings.dshBridge;
+  return {
+    url: d.url,
+    token: d.token,
+    timeoutMs: d.timeoutMs,
+    configSet: d.configSet,
+    count: d.count,
+  };
 }
 
 /**
@@ -1865,6 +1931,27 @@ function normalizeComfyUI(raw: unknown, def: ComfyUISettings): ComfyUISettings {
       : workflows[0].id;
 
   return { ...conn, workflows, activeWorkflowId };
+}
+
+/**
+ * DSH 写手设置清洗:逐字段类型兜底,**不写迁移**。
+ *
+ * 这是纯加法(dshBridge 整个键在升级前不存在),老配置 hydrate 后会拿到一整套默认值;
+ * defaultBackend 也不会被改成 dshbridge(那只由用户显式选择),故不需要迁移函数。
+ * 唯一要小心的是别用 `o.x || def.x` 那种写法——configSet 的**空串是有意义的存储值**
+ * (= 用 DSH 默认集),被 || 吞掉之后就分不清「没填」与「特意留空」了。
+ */
+function normalizeDshBridge(raw: unknown, def: DshBridgeSettings): DshBridgeSettings {
+  const o = (raw ?? {}) as Partial<DshBridgeSettings>;
+  return {
+    url: typeof o.url === 'string' ? o.url : def.url,
+    token: typeof o.token === 'string' ? o.token : def.token,
+    // 超时给下限 5s:填 0 或负数会让每次出图当场超时,还不如回落默认值
+    timeoutMs: Math.max(5000, Math.round(clampNumber(o.timeoutMs, def.timeoutMs, 5000, 900000))),
+    configSet: typeof o.configSet === 'string' ? o.configSet : def.configSet,
+    count: Math.round(clampNumber(o.count, def.count, 1, 8)),
+    charactersFrom: o.charactersFrom === 'manual' ? 'manual' : def.charactersFrom,
+  };
 }
 
 const NAI_MODEL_VALUES = new Set<string>(NAI_MODELS.map(m => m.value));
@@ -2180,13 +2267,18 @@ function normalize(raw: unknown): ImageSettings {
       ? (ru.imageDisplaySize as ImageDisplaySize)
       : d.ui.imageDisplaySize,
   };
-  // webui 已隐藏:存量数据里的 'webui' 一律迁移到默认后端(否则规范/出图口径会落空)
+  // webui 已隐藏:存量数据里的 'webui' 一律迁移到默认后端(否则规范/出图口径会落空)。
+  // **加后端必须同时加进这个白名单** —— 漏了的话用户选了新后端、刷新即被静默重置,
+  // 表现成「我明明选了它,怎么又变回 ComfyUI」,且没有任何报错可查。
   merged.defaultBackend =
-    merged.defaultBackend === 'comfyui' || merged.defaultBackend === 'nai'
+    merged.defaultBackend === 'comfyui' ||
+    merged.defaultBackend === 'nai' ||
+    merged.defaultBackend === 'dshbridge'
       ? merged.defaultBackend
       : d.defaultBackend;
   merged.webui = normalizeBackend(r.webui, d.webui);
   merged.comfyui = normalizeComfyUI(r.comfyui, d.comfyui);
+  merged.dshBridge = normalizeDshBridge(r.dshBridge, d.dshBridge);
   merged.nai = normalizeNai(r.nai, d.nai);
   // 副 API 渠道:逐个补全字段并校验类型
   merged.channels = (Array.isArray(r.channels) ? r.channels : []).map(normalizeChannel);
@@ -2274,6 +2366,7 @@ function applyInto(target: ImageSettings, src: ImageSettings): void {
   target.defaultBackend = src.defaultBackend;
   target.webui = src.webui;
   target.comfyui = src.comfyui;
+  target.dshBridge = src.dshBridge;
   target.nai = src.nai;
   target.channels = src.channels;
   target.assignments = src.assignments;

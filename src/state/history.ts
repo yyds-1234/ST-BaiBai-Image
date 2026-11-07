@@ -70,7 +70,7 @@ export interface LlmRecord extends BaseRecord {
 
 export interface ImageRecord extends BaseRecord {
   kind: 'image';
-  backend: 'nai' | 'comfyui';
+  backend: 'nai' | 'comfyui' | 'dshbridge';
   /** NAI 模型名 / ComfyUI 当前工作流预设名。 */
   model: string;
   prompt: string;
@@ -240,7 +240,7 @@ export function patchLlmTokens(id: number, promptTokens: number | null, completi
 }
 
 export interface ImageBegin {
-  backend: 'nai' | 'comfyui';
+  backend: 'nai' | 'comfyui' | 'dshbridge';
   model: string;
   prompt: string;
   nl: string;
