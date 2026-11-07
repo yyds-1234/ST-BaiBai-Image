@@ -552,6 +552,10 @@ function sourceLabel(entry: CharTagEntry): string {
         <span class="bbi-field-hint">
           填这一栏就够了,上面七个 tag 字段可以全留空。DSH 写手渠道优先用它(英文描述比 tag 串更贴散文流底模);只填 tag 也照常可用。
         </span>
+        <span class="bbi-field-hint">
+          <b>这一栏和上面七个字段全都留空 = 这个角色在 DSH 那边「没有长相」</b>：占位里写到这个名字时，
+          图里 TA 的脸由模型随机决定。不需要固定长相的角色可以先不管。
+        </span>
 
         <label class="bbi-modal-field">
           <span class="bbi-modal-label">中文外貌(可选)</span>

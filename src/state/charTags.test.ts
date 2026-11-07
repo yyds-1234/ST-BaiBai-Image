@@ -13,6 +13,7 @@ import {
   mergeCharTagSeed,
   normalizeCharTagStore,
   rolesForText,
+  rolesWithoutAppearance,
   type CharTagAutoOp,
 } from '@/state/charTags';
 import type { STMessage } from '@/st/context';
@@ -314,12 +315,20 @@ describe('中文外貌(zh)的认人与拼接', () => {
 
 describe('rolesForText：交给 DSH 的角色块（旁路）', () => {
   /** 与上面同一套塞库手法:rolesForText 也读 charTagLib。 */
-  function seed(entries: Array<{ name: string; raw?: string; nl?: string; fields?: Record<string, string> }>): void {
+  function seed(entries: Array<{
+    name: string;
+    raw?: string;
+    nl?: string;
+    /** 中文外貌：只喂 MOSS 那条线，DSH 的 roles 通道不发它（见 rolesWithoutAppearance）。 */
+    zh?: string;
+    fields?: Record<string, string>;
+  }>): void {
     charTagLib.entries = entries.map(entry => ({
       name: entry.name,
       fields: { ...emptyCharFields(), ...(entry.fields ?? {}) },
       raw: entry.raw ?? '1girl',
       nl: entry.nl ?? '',
+      ...(entry.zh ? { zh: entry.zh } : {}),
       source: 'manual' as const,
       desc: '',
       history: [],
@@ -399,6 +408,39 @@ describe('rolesForText：交给 DSH 的角色块（旁路）', () => {
     expect(rolesForText('   ')).toEqual([]);
     seed([]);
     expect(rolesForText('林夏')).toEqual([]);
+  });
+
+  it('空描述的角色不会进 roles，但会被 rolesWithoutAppearance 点名', () => {
+    // 这条守的是一个**无声**失败：库里建了名字却没写外貌的角色，rolesForText 会把它
+    // filter 掉，DSH 收到的就是「零个角色」——照常出图，图里那人没有任何长相设定，
+    // 与「占位里压根没提他」在回执里完全无法区分。故必须另有一个出口把名字捞出来。
+    seed([
+      { name: '许梨', raw: '', nl: '' },
+      { name: '林夏', raw: '1girl, long black hair' },
+    ]);
+    expect(rolesForText('许梨和林夏')).toEqual([
+      { name: '林夏', charBlock: '1girl, long black hair' },
+    ]);
+    expect(rolesWithoutAppearance('许梨和林夏')).toEqual([{ name: '许梨', onlyZh: false }]);
+  });
+
+  it('只填中文外貌 → 仍然算「DSH 拿不到长相」，但标成 onlyZh 以便给对修法', () => {
+    // zh 只喂 MOSS 那条线；DSH 的 roles 通道只发 charBlock（nl → tag 串），
+    // 所以这个人在 DSH 图里确实没有长相 —— 必须报。但**不能和「整列全空」同一句话**：
+    // 那样会把人引去补一栏他已经填过的东西（他填的是中文那股）。
+    seed([{ name: '苏曼', raw: '', nl: '', zh: '短发的年轻女人' }]);
+    expect(rolesWithoutAppearance('苏曼')).toEqual([{ name: '苏曼', onlyZh: true }]);
+  });
+
+  it('整列全空 → onlyZh=false（真正的「什么都没填」）', () => {
+    seed([{ name: '许梨', raw: '', nl: '' }]);
+    expect(rolesWithoutAppearance('许梨')).toEqual([{ name: '许梨', onlyZh: false }]);
+  });
+
+  it('占位里没提到的名字不会凭空出现在缺外貌清单里', () => {
+    seed([{ name: '许梨', raw: '', nl: '' }]);
+    expect(rolesWithoutAppearance('林夏站在窗边')).toEqual([]);
+    expect(rolesWithoutAppearance('')).toEqual([]);
   });
 });
 describe('global library merge & lock', () => {

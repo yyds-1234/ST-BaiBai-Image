@@ -645,6 +645,45 @@ export function rolesForText(text: string): { name: string; charBlock: string }[
     .filter(role => role.name && role.charBlock);
 }
 
+/** 「点名了、但 DSH 拿不到长相」的一个角色。 */
+export interface MissingAppearance {
+  name: string;
+  /**
+   * true = 这个人**填了中文外貌**,只是 DSH 渠道不读它。
+   *
+   * 两种情形的修法完全不同,合并成一句话会把人引去补一栏他已经填过的东西:
+   *   - false(整列全空):去「角色管理」随便补一句英文描述;
+   *   - true(只有 zh):zh 只给 MOSS 那条线用,DSH 只吃 nl / tag 串,
+   *     要在这条渠道里固定长相,得补的是英文那一栏。
+   */
+  onlyZh: boolean;
+}
+
+/**
+ * 角色库里**有这个人、但 DSH 渠道拿不到任何外貌串**的条目。
+ *
+ * 与 rolesForText 是同一个认人口径(matchCharTags),只是报另一半:那边给「能画的」,
+ * 这边给「点名了却画不出长相的」。分出来的理由是这个失败**无声**——
+ * rolesForText 把它们 filter 掉之后,DSH 收到的就是「零个角色」,照常出图,
+ * 图里那个人没有任何外貌设定,和「占位里根本没提他」完全无法区分。
+ *
+ * 空描述的角色在老数据里很常见(建档只填了名字),所以这里不静默:
+ * 调用方(Card.vue)据此给一条 toastr,告诉用户「图里这个人没有长相」。
+ *
+ * 判据只看 charBlockOf(nl → tag 串),**不把 zh 算作有长相**:DSH 的 roles 通道
+ * 只送 charBlock,中文外貌根本不会发过去。用户填了 zh 却以为这条渠道也生效,
+ * 正是需要在这里说清的事。
+ */
+export function rolesWithoutAppearance(text: string): MissingAppearance[] {
+  return matchCharTags(text)
+    .filter(entry => !charBlockOf(entry).trim())
+    .map(entry => ({
+      name: entry.name.trim(),
+      onlyZh: Boolean((entry.zh ?? '').trim()),
+    }))
+    .filter(item => item.name);
+}
+
 export function chineseAppearanceForText(text: string): string {
   // 认人交给 matchCharTags（与 DSH 渠道的 rolesForText 同一个函数），这里只管拼文本。
   const parts: string[] = [];

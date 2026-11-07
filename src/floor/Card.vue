@@ -37,7 +37,7 @@ import { isTagPlanning } from '@/floor/tagPlanState';
 import { formatGenerationMeta } from '@/generationMeta';
 import { channelLabel } from '@/pages/backend/channelSwitch';
 import { activeComfyPreset, activeOrientationLock, imageDisplayMaxHeight, settings } from '@/state/settings';
-import { chineseAppearanceForText, rolesForText } from '@/state/charTags';
+import { chineseAppearanceForText, rolesForText, rolesWithoutAppearance } from '@/state/charTags';
 import { beginImage, failImage, finishImage, patchImagePrompt, safeHistory } from '@/state/history';
 import { copyText } from '@/st/clipboard';
 import { getContext } from '@/st/context';
@@ -321,6 +321,9 @@ async function generate(): Promise<void> {
     // 为什么用 props.dsh 匹配而不是 props.characters:占位模式的世界书只许写中文散文、
     // 不许 <characters> 子标签,故 props.characters 恒空;也不该用 props.prompt(占位没有 tag)。
     dshRoles: dshActive.value ? rolesForText(props.dsh) : [],
+    // 占位里叫得出名字、但角色库里没给他写外貌的那些人。DSH 会照常出图（零个角色），
+    // 图里这个人就成了没有设定的路人 —— 这件事自己不发声，故必须在这里捞出来告诉用户。
+    dshRolesMissingAppearance: dshActive.value ? rolesWithoutAppearance(props.dsh) : [],
     source: { chatId: props.chatId, messageId: props.messageId, slot: props.seq },
   };
   // NAI 需要闸门排队 → 先显示「排队中」;ComfyUI 有服务端队列,直接进 generating;
@@ -329,6 +332,32 @@ async function generate(): Promise<void> {
   const { signal, token } = beginGen(slot, currentHash, naiActive.value ? 'queued' : 'generating');
   // 历史记录 id:在 seed 确定后才登记(见下),故这里先置空,catch 里据此判断要不要收尾。
   let historyId: number | null = null;
+
+  // 「占位里点名了角色，但 DSH 拿不到他的外貌」——这条提醒必须在**发请求前**给：
+  // 出图本身会成功（DSH 收到零个角色，照常画），图里那个人就是没有设定的路人。
+  // 等到看图才发现「这人怎么长得不对」时，用户没有任何线索指向「他没建档」。
+  //
+  // 两种人分开说（见 state/charTags 的 MissingAppearance）：整列全空是要他去补；
+  // 只填了中文外貌的是「填了但这条渠道不读」，让他改英文那一栏 —— 同一句话会把后者
+  // 引去补一栏他已经填过的东西。
+  const missingLooks = job.dshRolesMissingAppearance ?? [];
+  const blankNames = missingLooks.filter(item => !item.onlyZh).map(item => item.name);
+  const zhOnlyNames = missingLooks.filter(item => item.onlyZh).map(item => item.name);
+  if (blankNames.length) {
+    toastr.warning(
+      `角色「${blankNames.join('、')}」在角色库里没有外貌：这张图里 TA 的长相由模型随机决定。`
+      + '到柏宝绘「角色管理」补一句英文描述即可（只填那一栏就够，上面七个 tag 字段可以全空）。',
+      '柏宝绘',
+    );
+  }
+  if (zhOnlyNames.length) {
+    toastr.warning(
+      `角色「${zhOnlyNames.join('、')}」只填了中文外貌：那一栏只给 MOSS 那条线用，`
+      + 'DSH 写手这条渠道不吃它，所以这张图里 TA 的长相由模型随机决定。'
+      + '要在 DSH 里固定长相，请到「角色管理」补一句英文描述（自然语言外貌）。',
+      '柏宝绘',
+    );
+  }
 
   try {
     // 发起时就确定种子(NAI 面板种子 > 0 时用固定值;否则随机),随结果落盘进 extra

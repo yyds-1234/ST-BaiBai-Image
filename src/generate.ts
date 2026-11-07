@@ -82,6 +82,14 @@ export interface GenerateInput {
    * 没填才回落到 danbooru tag 串 —— 见 state/charTags 的 charBlockOf。
    */
   dshRoles?: { name: string; charBlock: string }[];
+  /**
+   * 占位里点名了、但角色库里**没有外貌可写**的角色名。
+   *
+   * 纯诊断字段：不进请求、不进提示词，只供卡片弹一条提醒。理由见 state/charTags 的
+   * rolesWithoutAppearance —— 这类角色会被 rolesForText 静默滤掉，DSH 侧看到的是
+   * 「零个角色」，照常出图，图里那个人没有任何面貌设定，且与「压根没提他」无法区分。
+   */
+  dshRolesMissingAppearance?: { name: string; onlyZh: boolean }[];
 
   /**
    * 纯诊断坐标 { chatId, messageId, slot }。只有 DSH 渠道会用到(它写进自己的 runs.jsonl)。
