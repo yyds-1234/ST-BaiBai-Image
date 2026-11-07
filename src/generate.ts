@@ -69,6 +69,14 @@ export interface GenerateInput {
    * 仍按 prompt/nl 老路径出图,不至于点了没反应。
    */
   dsh?: string;
+  /**
+   * 这一单画谁（柏宝绘认出来的在场角色名，按出场顺序）。
+   *
+   * **分工**：柏宝绘决定「画谁」——它看得见正文，知道这一轮谁在场；DSH 决定
+   * 「这人长什么样」——形象块、LoRA、绑哪条线都在它自己的 identities 档案里。
+   * 故这里只传名字，不传外貌块：传块等于让同一件事有两套真源。
+   */
+  dshCharacters?: string[];
 
   /**
    * 纯诊断坐标 { chatId, messageId, slot }。只有 DSH 渠道会用到(它写进自己的 runs.jsonl)。
@@ -307,9 +315,9 @@ export async function generateImage(
         conn,
         {
           scene,
-          // 不传 characters:占位模式没有 <characters> 子标签,这一路恒为空。
-          // DSH 侧在写手产出的 scene 串里按名字认人(identities/*.md + line 门禁),
-          // 传一个恒空清单只会让协议读起来像「这里能指定角色」。
+          // 只传名字：DSH 拿它去自己的档案里认人（形象块 / LoRA / 绑线都归它管）。
+          // 空清单就整个字段不发——发 [] 会让 DSH 多报一条「无角色」。
+          characters: input.dshCharacters?.length ? input.dshCharacters : undefined,
           size,
           negative: input.negative,
           seed: input.seed,

@@ -12,6 +12,7 @@ import {
   emptyCharFields,
   mergeCharTagSeed,
   normalizeCharTagStore,
+  roleNamesForText,
   type CharTagAutoOp,
 } from '@/state/charTags';
 import type { STMessage } from '@/st/context';
@@ -286,6 +287,48 @@ describe('中文外貌(zh)的认人与拼接', () => {
   });
 });
 
+describe('roleNamesForText：交给 DSH 的在场角色名单', () => {
+  /** 与上面同一套塞库手法:roleNamesForText 也读 charTagLib。 */
+  function seed(entries: Array<{ name: string; raw?: string }>): void {
+    charTagLib.entries = entries.map(entry => ({
+      name: entry.name,
+      fields: emptyCharFields(),
+      raw: entry.raw ?? '1girl',
+      nl: '',
+      source: 'manual' as const,
+      desc: '',
+      history: [],
+    }));
+  }
+
+  it('按名字认出在场角色，只给名字（外貌归 DSH 的档案管）', () => {
+    seed([{ name: '林夏', raw: '1girl, long black hair' }]);
+    expect(roleNamesForText('傍晚的天台，林夏靠着栏杆回头')).toEqual(['林夏']);
+  });
+
+  it('多个角色按关系库顺序给出；没出场的角色不进清单', () => {
+    seed([
+      { name: '林夏' },
+      { name: '苏曼' },
+      { name: '许梨' },
+    ]);
+    expect(roleNamesForText('林夏和苏曼在门口')).toEqual(['林夏', '苏曼']);
+    expect(roleNamesForText('只有许梨一个人')).toEqual(['许梨']);
+  });
+
+  it('长名覆盖短名，与中文外貌走同一个认人函数', () => {
+    seed([{ name: '雪' }, { name: '小雪' }]);
+    expect(roleNamesForText('小雪走过来')).toEqual(['小雪']);
+  });
+
+  it('空文本与空库给出空清单（调用方据此不传该字段）', () => {
+    seed([{ name: '林夏' }]);
+    expect(roleNamesForText('')).toEqual([]);
+    expect(roleNamesForText('   ')).toEqual([]);
+    seed([]);
+    expect(roleNamesForText('林夏')).toEqual([]);
+  });
+});
 describe('global library merge & lock', () => {
   const globalEntry = (name: string, fields: Record<string, string>) => ({
     name,

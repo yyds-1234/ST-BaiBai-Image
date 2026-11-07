@@ -565,24 +565,59 @@ export function findCharTag(name: string): CharTagEntry | undefined {
  * **换行**:zh 是手填文本,可能带换行;nl 走 sanitizeContent 已被折成空格,这里同口径对齐,
  * 免得中文外貌成为整条正向里唯一带换行的段落。
  */
-export function chineseAppearanceForText(text: string): string {
+/**
+ * 从一段文本里认出在场角色（名字字面出现即算），按**长名优先**排好序。
+ *
+ * 长名优先是必须的:库里同时有「雪」与「小雪」时,先命中长的那个才不会把同一个人的
+ * 两套档案都拉进来。
+ *
+ * **这是「认人」的唯一口径**:中文外貌注入(chineseAppearanceForText)与
+ * DSH 渠道的角色提交(roleNamesForText)共用它,两处若各写一套,就会出现
+ * 「外貌拼了这个人、提交给 DSH 的名单里却没有他」这种对不上的事。
+ */
+export function matchCharTags(text: string): CharTagEntry[] {
   const source = (text ?? '').trim();
-  if (!source) return '';
+  if (!source) return [];
   const candidates = charTagLib.entries
-    .filter(entry => entry.name.trim() && (entry.zh ?? '').trim())
-    // 长名优先:库里同时有「雪」与「小雪」时先命中长的那个
+    .filter(entry => entry.name.trim())
     .sort((left, right) => right.name.trim().length - left.name.trim().length);
-  const parts: string[] = [];
+  const out: CharTagEntry[] = [];
   const accepted: string[] = [];
   for (const entry of candidates) {
     const name = entry.name.trim();
     if (!source.includes(name)) continue;
-    // 已被更长且已命中的名字覆盖:那是同一个人的另一条档案,不重复拼。
-    // (「雪」是「小雪」的子串,而「小雪」已经命中并拼过一段了。)
+    // 已被更长且已命中的名字覆盖:那是同一个人的另一条档案,不重复算。
     if (accepted.some(longer => longer.includes(name))) continue;
     accepted.push(name);
+    out.push(entry);
+  }
+  return out;
+}
+
+/**
+ * 给 DSH 渠道用的**在场角色名单**。
+ *
+ * 与 chineseAppearanceForText 的关系:**认人是同一个函数**(matchCharTags),只是产出不同——
+ * 那边拼一段给人看的中文外貌,这边给出「这一单画谁」。
+ *
+ * 为什么只给名字、不给外貌块:DSH 侧的角色管理是它自己的地盘(identities/*.md +
+ * line 门禁 + 每个角色绑定的 LoRA 与画风档),柏宝绘塞一份块过去等于让同一件事有两套
+ * 真源,两边一改就各说各话。**分工是**:柏宝绘决定「这一单画谁」(它看得见正文、
+ * 认得出在场的人),DSH 决定「这个人长什么样」(形态、LoRA、绑哪条线由档案定)。
+ *
+ * 名字必须是 DSH 档案里认得的写法(显示名或别名),否则那一侧会按「角色不存在」报错——
+ * 这是有意的:静默跳过会让「图里少了个人」变成一件查不出来的事。
+ */
+export function roleNamesForText(text: string): string[] {
+  return matchCharTags(text).map(entry => entry.name.trim()).filter(Boolean);
+}
+
+export function chineseAppearanceForText(text: string): string {
+  // 认人交给 matchCharTags（与 DSH 渠道的 roleNamesForText 同一个函数），这里只管拼文本。
+  const parts: string[] = [];
+  for (const entry of matchCharTags(text)) {
     const zh = (entry.zh ?? '').trim().replace(/[\r\n]+/g, ' ');
-    if (zh) parts.push(`${name}：${zh}`);
+    if (zh) parts.push(`${entry.name.trim()}：${zh}`);
   }
   return parts.join(' ');
 }

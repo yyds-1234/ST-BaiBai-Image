@@ -119,11 +119,34 @@ describe('generateImage: dsh 分支', () => {
 
     const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
     expect(body.scene).toBe('傍晚的天台，她靠着栏杆回头');
-    // 不再传 characters：占位模式没有 <characters>，DSH 侧在 scene 串里按名字认人
+    // 没给角色块时整个字段都不发：发 [] 会让 DSH 多报一条「无角色」告警
     expect(body.characters).toBeUndefined();
     expect(body.source).toEqual({ chatId: 'c1', messageId: 7, slot: 0 });
   });
 
+  it('在场角色名原样进 payload.characters', async () => {
+    dshReady();
+    acceptThenDone();
+    await generateImage({
+      prompt: '',
+      dsh: '傍晚的天台，林夏靠着栏杆回头',
+      dshCharacters: ['林夏', '陈默'],
+      size: 'portrait',
+      seed: 7,
+    });
+    const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
+    // 只传名字：形象块 / LoRA / 绑哪条线都由 DSH 自己的 identities 档案决定。
+    // 顺序即出场顺序，第一位站主角位。
+    expect(body.characters).toEqual(['林夏', '陈默']);
+  });
+
+  it('角色名单为空时不发这个字段', async () => {
+    dshReady();
+    acceptThenDone();
+    await generateImage({ prompt: '', dsh: '她站在窗边', dshCharacters: [], size: 'portrait', seed: 1 });
+    const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(body.characters).toBeUndefined();
+  });
   it('没有 <dsh> 时回落 prompt —— 老 tag 切到本渠道照样能出图', async () => {
     dshReady();
     acceptThenDone();

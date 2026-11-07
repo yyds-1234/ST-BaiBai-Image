@@ -97,7 +97,12 @@ export interface DshProgress {
 export interface DshGenerateValues {
   /** 画面占位散文。 */
   scene: string;
-  /** 占位里出现的角色名(显示名/别名均可);DSH 侧仍按自己的档案解析。 */
+  /**
+   * 这一单画谁（角色名，按出场顺序；DSH 拿它去自己的 identities 档案里认人）。
+   *
+   * 只传名字不传外貌块：形象块、LoRA、绑哪条配置集都由 DSH 的档案决定，
+   * 柏宝绘只负责回答「这一轮谁在场」。
+   */
   characters?: string[];
   size: Orientation;
   /** 追加负向串;DSH 侧与配置集 negativeHint 合并,不替换。 */
