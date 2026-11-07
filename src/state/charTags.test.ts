@@ -134,6 +134,31 @@ describe('char tags store normalize', () => {
   });
 });
 
+describe('只填英文描述的角色也能存', () => {
+  it('normalizeCharTagStore 不因为没填 tag 字段就把条目丢掉', () => {
+    const entries = normalizeCharTagStore({
+      entries: [{ name: '林夏', nl: 'A girl in a grey knit sweater.', source: 'manual' }],
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].nl).toBe('A girl in a grey knit sweater.');
+  });
+
+  it('只填中文外貌的也照样保留', () => {
+    const entries = normalizeCharTagStore({
+      entries: [{ name: '林夏', zh: '鹅蛋脸，单眼皮。', source: 'manual' }],
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].zh).toBe('鹅蛋脸，单眼皮。');
+  });
+
+  it('三样全空才丢', () => {
+    const entries = normalizeCharTagStore({
+      entries: [{ name: '林夏', source: 'manual' }],
+    });
+    expect(entries).toHaveLength(0);
+  });
+});
+
 describe('floor-owned character changes', () => {
   it('removes a character when its creation floor is deleted', () => {
     const create = createCharTagNewOp({
@@ -289,12 +314,12 @@ describe('中文外貌(zh)的认人与拼接', () => {
 
 describe('rolesForText：交给 DSH 的角色块（旁路）', () => {
   /** 与上面同一套塞库手法:rolesForText 也读 charTagLib。 */
-  function seed(entries: Array<{ name: string; raw?: string; fields?: Record<string, string> }>): void {
+  function seed(entries: Array<{ name: string; raw?: string; nl?: string; fields?: Record<string, string> }>): void {
     charTagLib.entries = entries.map(entry => ({
       name: entry.name,
       fields: { ...emptyCharFields(), ...(entry.fields ?? {}) },
       raw: entry.raw ?? '1girl',
-      nl: '',
+      nl: entry.nl ?? '',
       source: 'manual' as const,
       desc: '',
       history: [],
@@ -334,6 +359,38 @@ describe('rolesForText：交给 DSH 的角色块（旁路）', () => {
       { name: '小雪', raw: '1girl, silver hair' },
     ]);
     expect(rolesForText('小雪走过来')).toEqual([{ name: '小雪', charBlock: '1girl, silver hair' }]);
+  });
+
+  it('有英文描述时用它，而不是 tag 串', () => {
+    // 角色库的「自然语言外貌」是给人写描述用的那一栏，写起来比堆 tag 省事，
+    // 而 DSH 的散文流底模本来就吃散文不吃 tag 堆。故 nl 优先。
+    seed([{
+      name: '林夏',
+      raw: '1girl, long black hair',
+      nl: 'A young woman with long black hair and a calm gaze.',
+    }]);
+    expect(rolesForText('林夏回头')).toEqual([{
+      name: '林夏',
+      charBlock: 'A young woman with long black hair and a calm gaze.',
+    }]);
+  });
+
+  it('只填英文描述、一个字 tag 都没有，也照样能用', () => {
+    seed([{ name: '林夏', raw: '', nl: 'A girl in a grey knit sweater.' }]);
+    expect(rolesForText('林夏坐在窗边')).toEqual([{
+      name: '林夏',
+      charBlock: 'A girl in a grey knit sweater.',
+    }]);
+  });
+
+  it('没填描述时回落到 tag 串（老数据照旧可用）', () => {
+    seed([{ name: '苏曼', raw: '1girl, short hair' }]);
+    expect(rolesForText('苏曼')).toEqual([{ name: '苏曼', charBlock: '1girl, short hair' }]);
+  });
+
+  it('描述与 tag 都空才丢掉这个角色', () => {
+    seed([{ name: '许梨', raw: '', nl: '' }]);
+    expect(rolesForText('许梨')).toEqual([]);
   });
 
   it('空文本与空库给出空清单（调用方据此不传该字段）', () => {

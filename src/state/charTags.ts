@@ -237,7 +237,11 @@ function normalizeEntry(raw: unknown): CharTagEntry | null {
   const fields = normalizeFields(value.fields);
   const legacyTags = typeof value.tags === 'string' ? value.tags.trim() : '';
   const rawTag = typeof value.raw === 'string' ? value.raw.trim() : legacyTags;
-  if (!rawTag && charFieldsEmpty(fields)) return null;
+  const nlText = typeof value.nl === 'string' ? value.nl.trim() : '';
+  const zhText = typeof value.zh === 'string' ? value.zh.trim() : '';
+  // 只填了「自然语言外貌」（英文描述）或「中文外貌」的角色也是有效条目：
+  // 那两栏本来就是给人写描述用的，不该因为没填 tag 字段就被整条丢掉。
+  if (!rawTag && charFieldsEmpty(fields) && !nlText && !zhText) return null;
   const entry: CharTagEntry = {
     name,
     fields,
@@ -249,8 +253,7 @@ function normalizeEntry(raw: unknown): CharTagEntry | null {
   };
   // 空串不写这个键:zh 是 0.3.4 新增的可选字段,存量条目归一化后不该多出一个
   // 空字段(会把 equality 断言、导出的 JSON 一并改形)。有内容才落。
-  const zh = typeof value.zh === 'string' ? value.zh.trim() : '';
-  if (zh) entry.zh = zh;
+  if (zhText) entry.zh = zhText;
   return entry;
 }
 
@@ -617,12 +620,30 @@ export function matchCharTags(text: string): CharTagEntry[] {
  * 只收 buildEntryTag 能产出非空串的条目:空块交给 DSH 等于告诉它「这个角色没长相」，
  * 结果是不注入，还会在回执里被当成「档案缺形象块」报出来。宁可这里就不给。
  */
-export function rolesForText(text: string): { name: string; charBlock: string }[] {
-  return matchCharTags(text)
-    .map(entry => ({ name: entry.name.trim(), charBlock: buildEntryTag(entry) }))
-    .filter(role => role.name && role.charBlock);
+/**
+ * 一个角色的「外貌串」：**英文描述优先，没有才回落到 tag**。
+ *
+ * 这两样都是柏宝绘角色库里的一等公民：
+ *   nl  —— 「自然语言外貌」，一句连贯英文，本来是给自然语言模式的底模用的；
+ *   tag —— 七个字段拼出来的 danbooru 短 tag。
+ *
+ * 为什么优先 nl：写自然语言描述比堆 tag 省事得多，而 DSH 侧的散文流底模（moss 写实线）
+ * 本身就是 `nl || prompt` 的口径 —— 一大串 danbooru tag 堆进那里等于把画面砍掉一半。
+ * 反过来说，用户只填了 tag（老数据、或者就是习惯写 tag）时也必须能用，故回落到 tag。
+ *
+ * 两样都空 → 空串，调用方会把这个角色整个丢掉（见 rolesForText 的 filter）。
+ */
+export function charBlockOf(entry: Pick<CharTagEntry, 'fields' | 'raw' | 'nl'>): string {
+  const nl = (entry.nl ?? '').trim();
+  if (nl) return nl;
+  return buildEntryTag(entry);
 }
 
+export function rolesForText(text: string): { name: string; charBlock: string }[] {
+  return matchCharTags(text)
+    .map(entry => ({ name: entry.name.trim(), charBlock: charBlockOf(entry) }))
+    .filter(role => role.name && role.charBlock);
+}
 
 export function chineseAppearanceForText(text: string): string {
   // 认人交给 matchCharTags（与 DSH 渠道的 rolesForText 同一个函数），这里只管拼文本。
@@ -644,7 +665,10 @@ export function upsertCharTag(
   opts: UpsertOptions = {},
 ): boolean {
   const name = entry.name.trim();
-  if (!name || !buildEntryTag(entry)) return false;
+  // 准入门槛：有 tag 串**或**有自然语言/中文外貌描述，都算有效条目。
+  // 只填英文描述的用户不该被「请先填 tag」挡回去 —— 那一栏本来就是给人写描述的。
+  const hasDescription = Boolean(entry.nl.trim() || (entry.zh ?? '').trim());
+  if (!name || (!buildEntryTag(entry) && !hasDescription)) return false;
   const previous = findCharTag(oldName ?? name);
   const next: CharTagEntry = {
     name,

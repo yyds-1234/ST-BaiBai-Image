@@ -94,11 +94,17 @@ export interface DshProgress {
   }) => void;
 }
 
-/** 一个要拼进画面的角色：名字 + 英文 tag 块。 */
+/** 一个要拼进画面的角色：名字 + 外貌串。 */
 export interface DshRole {
   /** 角色名。只用于回执与日志（DSH 不拿它查档案）。 */
   name: string;
-  /** 英文 danbooru tag 串，原样拼进正向。 */
+  /**
+   * 外貌串，原样拼进正向。
+   *
+   * **两种写法都合法**：一句连贯英文描述（角色库的「自然语言外貌」），或者一串
+   * danbooru 短 tag。DSH 不做判别、不做转换——它该按散文读还是按 tag 读，由配置集决定，
+   * 插件只管把这段原样拼进去。角色库那边 nl 优先、没填才回落到 tag（state/charTags 的 charBlockOf）。
+   */
   charBlock: string;
 }
 

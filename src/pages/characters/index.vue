@@ -197,8 +197,11 @@ function confirmEntry() {
     toastr.warning('角色名不能为空', '柏宝绘');
     return;
   }
-  if (!previewTag.value) {
-    toastr.warning('至少填一个外貌字段(或整串 tag)', '柏宝绘');
+  // 门槛与 upsertCharTag 同口径：tag 串、自然语言外貌、中文外貌，三样有一样就能存。
+  // 只填英文描述是完全正当的用法（DSH 侧优先用它），不该被「请先填 tag」挡回去。
+  const hasDescription = Boolean(d.nl.trim() || d.zh.trim());
+  if (!previewTag.value && !hasDescription) {
+    toastr.warning('至少填一个外貌字段、整串 tag，或一段英文/中文外貌描述', '柏宝绘');
     return;
   }
   const entryData: CharTagEntry = {
@@ -542,10 +545,13 @@ function sourceLabel(entry: CharTagEntry): string {
             :rows="2"
             :max-rows="4"
             mono
-            placeholder="一句连贯英文外貌描述,自然语言模式下替换 nl 里的 @角色名 用;留空则用 tag 串替换"
+            placeholder="一句连贯英文外貌描述。DSH 写手渠道优先用它；留空则用上面拼出的 tag 串"
             @input="markManual"
           />
         </label>
+        <span class="bbi-field-hint">
+          填这一栏就够了,上面七个 tag 字段可以全留空。DSH 写手渠道优先用它(英文描述比 tag 串更贴散文流底模);只填 tag 也照常可用。
+        </span>
 
         <label class="bbi-modal-field">
           <span class="bbi-modal-label">中文外貌(可选)</span>

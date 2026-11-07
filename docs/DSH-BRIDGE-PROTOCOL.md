@@ -61,7 +61,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `scene` | string | 是 | **画面占位原文**：中文散文（人物 + 场景 + 动作 + 光线）。上限 `promptMaxChars × 2`。 |
-| `roles` | `{name,charBlock}[]` | 否 | **柏宝绘实际走的字段**。角色块旁路：DSH 不读 identities/、不查档案、不过 line 门禁、不套用 LoRA / 风格档，块原样拼进正向（第一个站主角位）。角色由柏宝绘管理，两边角色库无需同名、无需同步。 |
+| `roles` | `{name,charBlock}[]` | 否 | **柏宝绘实际走的字段**。角色旁路：DSH 不读 identities/、不查档案、不过 line 门禁、不套用 LoRA / 风格档，`charBlock` 原样拼进正向（第一个站主角位）。`charBlock` **两种写法都合法**：一句连贯英文描述（推荐，贴散文流底模）或一串 danbooru 短 tag；DSH 不判别、不转换。角色由柏宝绘管理，两边角色库无需同名、无需同步。 |
 | `characters` | string[] | 否 | 名字数组，走 DSH 自己的档案：拿名字去 identities/*.md 认人、挂 LoRA、过 line 门禁。curl 手写 / 工具调用用这条；占位模式下柏宝绘不传它。 |
 | `size` | `'portrait'` | `'landscape'` | 否 | 默认 `portrait`。DSH 会按它摆正宽高（对调，像素总数不变）。 |
 | `configSet` | string | 否 | 配置集 id；留空用 DSH 默认集。 |

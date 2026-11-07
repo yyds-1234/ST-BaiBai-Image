@@ -70,12 +70,15 @@ export interface GenerateInput {
    */
   dsh?: string;
   /**
-   * 角色块（柏宝绘的角色库认出来的在场角色，按出场顺序）。
+   * 角色外貌（柏宝绘的角色库认出来的在场角色，按出场顺序）。
    *
-   * **角色由柏宝绘管理**：它看得见正文、知道这一轮谁在场、长什么样，直接把英文块交给 DSH。
+   * **角色由柏宝绘管理**：它看得见正文、知道这一轮谁在场、长什么样，直接把外貌串交给 DSH。
    * DSH 走**旁路**处理这批 —— 不读它自己的 identities 档案、不查 LoRA、不过 line 门禁，
-   * 块原样拼进正向。两条通道互不相干：要说名字让 DSH 查档案用 characters，
-   * 要自己给块用 roles。
+   * 原样拼进正向。两条通道互不相干：要说名字让 DSH 查档案用 characters，
+   * 要自己给外貌用 roles。
+   *
+   * `charBlock` 里放的通常是角色库的「自然语言外貌」（一句连贯英文描述），
+   * 没填才回落到 danbooru tag 串 —— 见 state/charTags 的 charBlockOf。
    */
   dshRoles?: { name: string; charBlock: string }[];
 
