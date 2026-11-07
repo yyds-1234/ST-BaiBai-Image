@@ -61,7 +61,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `scene` | string | 是 | **画面占位原文**：中文散文（人物 + 场景 + 动作 + 光线）。上限 `promptMaxChars × 2`。 |
-| `characters` | string[] | 否 | 占位里出现的角色名；DSH 仍按自己的档案与 `line` 门禁解析。 |
+| `characters` | string[] | 否 | 角色名。**柏宝绘这一侧不再传**（占位模式没有 `<characters>` 子标签，恒空）；谁在画面里由 DSH 在写手产出的 scene 串里按名字识别，再走 `identities/*.md` 与 `line` 门禁。curl 手写仍可用。 |
 | `size` | `'portrait'` | `'landscape'` | 否 | 默认 `portrait`。DSH 会按它摆正宽高（对调，像素总数不变）。 |
 | `configSet` | string | 否 | 配置集 id；留空用 DSH 默认集。 |
 | `negative` | string | 否 | 追加负向串；与配置集 `negativeHint` **合并**，不替换。 |

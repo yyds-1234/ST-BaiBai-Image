@@ -84,10 +84,7 @@ const timeoutSec = computed({
 });
 
 const COUNT_OPTIONS = ['1', '2', '3', '4'].map(v => ({ value: v, label: v + ' 张' }));
-const CHARACTER_SOURCE_OPTIONS = [
-  { value: 'prompt', label: '从占位里认（默认）' },
-  { value: 'manual', label: '只用手填名单' },
-];
+
 </script>
 <template>
   <div class="panel">
@@ -166,23 +163,7 @@ const CHARACTER_SOURCE_OPTIONS = [
           </p>
         </div>
 
-        <div class="bbi-field">
-          <div class="bbi-field-head">
-            <span class="bbi-field-label">角色名来源</span>
-          </div>
-          <BbiSelect
-            :model-value="settings.dshBridge.charactersFrom"
-            :options="CHARACTER_SOURCE_OPTIONS"
-            aria-label="角色名来源"
-            @update:model-value="settings.dshBridge.charactersFrom = $event as 'prompt' | 'manual'"
-          />
-          <p class="bbi-field-hint">
-            占位模式下主模型通常不写 &lt;characters&gt;，故「从占位里认」多半拿到空名单；
-            DSH 侧仍会按自己的角色档案与配置集门禁解析，这里只是把线索先带过去。
-          </p>
-        </div>
-
-        <div class="conn-actions">
+<div class="conn-actions">
           <span v-if="inUse" class="conn-inuse"><Icon name="check" :size="13" /> 当前出图渠道</span>
           <button
             v-else

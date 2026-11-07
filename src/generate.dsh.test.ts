@@ -28,7 +28,6 @@ function dshReady(overrides: Partial<typeof settings.dshBridge> = {}): void {
   settings.dshBridge.timeoutMs = 180000;
   settings.dshBridge.configSet = '';
   settings.dshBridge.count = 1;
-  settings.dshBridge.charactersFrom = 'prompt';
   Object.assign(settings.dshBridge, overrides);
 }
 
@@ -96,7 +95,6 @@ describe('generateImage: dsh 分支', () => {
     const output = await generateImage({
       prompt: '',
       dsh: '傍晚的天台，她靠着栏杆回头',
-      dshCharacters: ['林夏'],
       size: 'portrait',
       seed: 42,
       source: { chatId: 'c1', messageId: 7, slot: 0 },
@@ -121,7 +119,8 @@ describe('generateImage: dsh 分支', () => {
 
     const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
     expect(body.scene).toBe('傍晚的天台，她靠着栏杆回头');
-    expect(body.characters).toEqual(['林夏']);
+    // 不再传 characters：占位模式没有 <characters>，DSH 侧在 scene 串里按名字认人
+    expect(body.characters).toBeUndefined();
     expect(body.source).toEqual({ chatId: 'c1', messageId: 7, slot: 0 });
   });
 

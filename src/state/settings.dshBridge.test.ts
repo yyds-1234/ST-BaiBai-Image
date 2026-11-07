@@ -55,7 +55,6 @@ describe('老配置升级', () => {
       timeoutMs: 180000,
       configSet: '',
       count: 1,
-      charactersFrom: 'prompt',
     });
   });
 
@@ -100,7 +99,6 @@ describe('dshBridge 逐字段兜底', () => {
         timeoutMs: 240000,
         configSet: 'anime-ob',
         count: 3,
-        charactersFrom: 'manual',
       },
     });
     expect(settings.dshBridge).toEqual({
@@ -109,7 +107,6 @@ describe('dshBridge 逐字段兜底', () => {
       timeoutMs: 240000,
       configSet: 'anime-ob',
       count: 3,
-      charactersFrom: 'manual',
     });
   });
 
@@ -126,7 +123,6 @@ describe('dshBridge 逐字段兜底', () => {
         timeoutMs: 'long',
         configSet: 9,
         count: {},
-        charactersFrom: 'nope',
       },
     });
     expect(settings.dshBridge).toEqual({
@@ -135,7 +131,6 @@ describe('dshBridge 逐字段兜底', () => {
       timeoutMs: 180000,
       configSet: '',
       count: 1,
-      charactersFrom: 'prompt',
     });
   });
 

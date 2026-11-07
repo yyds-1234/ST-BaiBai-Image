@@ -137,17 +137,17 @@ export interface ComfyUISettings extends BackendConn {
  * 这个后端只要一段中文画面描述——提示词工程(配置集规范、风格档、形象块)全在 DSH 侧,
  * 故这里的字段只有「怎么连」与「用哪套配置集」,没有任何提示词或采样参数。
  *
- * 字段契约见 docs/DSH-BRIDGE-PROTOCOL.md;连接形状(前五项)与 backends/dshBridge.ts 的
- * DshBridgeConn 同源,故直接 extends,不抄第二份。
+ * 字段契约见 docs/DSH-BRIDGE-PROTOCOL.md;连接形状与 backends/dshBridge.ts 的 DshBridgeConn
+ * 完全同源,故直接取别名,不抄第二份。
+ *
+ * 【为什么不设「角色名来源」开关】曾经有过 charactersFrom: 'prompt' | 'manual'，
+ * 但两条路都走不通：占位模式的世界书只许写中文散文、不许 <characters> 子标签，
+ * 故 'prompt' 恒拿到空名单；'manual' 面板上又没有手填输入框，等于一个只能存不能用的值。
+ * 而 DSH 侧本来就按 scene 串里出现的名字在自己档案里认人（identities/*.md + line 门禁），
+ * 再开一个手填名单只会允许「填的与正文写的不是同一批人」，那种不一致在 DSH 那边
+ * 表现为静默不注入，比没有这个开关更难查。故整个字段删除，认人只有名字一条路。
  */
-export interface DshBridgeSettings extends DshBridgeConn {
-  /**
-   * 角色名从哪里来。
-   * - prompt:从 <characters> 子标签或正文里认(默认,占位模式下通常没有 characters);
-   * - manual:只用面板里手填的名字(留给「正文里叫别的名字、档案里叫这个」的场合)。
-   */
-  charactersFrom: 'prompt' | 'manual';
-}
+export type DshBridgeSettings = DshBridgeConn;
 
 /**
  * NAI 生图模型标识。
@@ -1584,7 +1584,6 @@ function dshBridgeDefaults(): DshBridgeSettings {
     timeoutMs: DSH_BRIDGE_DEFAULT_TIMEOUT_MS,
     configSet: '',
     count: 1,
-    charactersFrom: 'prompt',
   };
 }
 
@@ -1950,7 +1949,6 @@ function normalizeDshBridge(raw: unknown, def: DshBridgeSettings): DshBridgeSett
     timeoutMs: Math.max(5000, Math.round(clampNumber(o.timeoutMs, def.timeoutMs, 5000, 900000))),
     configSet: typeof o.configSet === 'string' ? o.configSet : def.configSet,
     count: Math.round(clampNumber(o.count, def.count, 1, 8)),
-    charactersFrom: o.charactersFrom === 'manual' ? 'manual' : def.charactersFrom,
   };
 }
 

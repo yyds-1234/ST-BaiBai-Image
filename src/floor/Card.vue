@@ -298,11 +298,13 @@ async function generate(): Promise<void> {
     negative: props.negative,
     characters: props.characters.map(character => ({ ...character })),
     size: effectiveSize.value,
-    // DSH 占位:散文与角色名一起带上。角色名取 <characters> 里的(占位模式通常没有),
-    // 但 charactersFrom='manual' 时以面板手填为准——那由 generate.ts 之外的渠道设置决定,
-    // 这里只负责把「正文里认出来的」交上去。
+    // DSH 占位:只带散文。
+    //
+    // 不再带角色名清单:占位模式的世界书只许写中文散文、不许 <characters> 子标签,
+    // 故 props.characters 在这里恒为空数组,那行 map 从来只产出 []。DSH 侧本来就会
+    // 在写手产出的 scene 串里按名字认人(identities/*.md + line 门禁),认人只有名字
+    // 一条路,这里传个恒空清单只会让下一次读代码的人以为它有用。
     dsh: props.dsh,
-    dshCharacters: dshActive.value ? [...props.characters.map(character => character.name)] : [],
     source: { chatId: props.chatId, messageId: props.messageId, slot: props.seq },
   };
   // NAI 需要闸门排队 → 先显示「排队中」;ComfyUI 有服务端队列,直接进 generating;

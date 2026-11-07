@@ -69,8 +69,7 @@ export interface GenerateInput {
    * 仍按 prompt/nl 老路径出图,不至于点了没反应。
    */
   dsh?: string;
-  /** 占位里出现的角色名(DSH 侧按自己的档案解析;这里只是把线索带过去)。 */
-  dshCharacters?: string[];
+
   /**
    * 纯诊断坐标 { chatId, messageId, slot }。只有 DSH 渠道会用到(它写进自己的 runs.jsonl)。
    *
@@ -308,7 +307,9 @@ export async function generateImage(
         conn,
         {
           scene,
-          characters: input.dshCharacters?.length ? input.dshCharacters : undefined,
+          // 不传 characters:占位模式没有 <characters> 子标签,这一路恒为空。
+          // DSH 侧在写手产出的 scene 串里按名字认人(identities/*.md + line 门禁),
+          // 传一个恒空清单只会让协议读起来像「这里能指定角色」。
           size,
           negative: input.negative,
           seed: input.seed,
