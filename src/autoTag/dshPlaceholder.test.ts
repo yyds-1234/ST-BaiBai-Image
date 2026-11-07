@@ -181,6 +181,12 @@ describe('DSH_WORLDBOOK_ENTRY', () => {
     expect(DSH_WORLDBOOK_ENTRY).toContain('采样参数');
     // 一轮只画一帧:第二条占位在插件侧没有落点,只会把第一条挤成一张空图
     expect(DSH_WORLDBOOK_ENTRY).toContain('一次回复最多一条');
+    // 位置决定图落在哪:锚点在 tag 所在的行内位置,攒到最后 = 图只能挂全文末尾
+    expect(DSH_WORLDBOOK_ENTRY).toContain('插在它描述的那一段正文之后');
+    expect(DSH_WORLDBOOK_ENTRY).not.toContain('最末尾');
+    // 示例本身要演示「占位后面还有正文」,否则模型学到的仍然是压尾写法
+    const closing = DSH_WORLDBOOK_ENTRY.lastIndexOf('</bbi_image>');
+    expect(DSH_WORLDBOOK_ENTRY.slice(closing)).toMatch(/她推门进去/);
   });
 
   it('世界书正文是原样拼进提示词的,不能带 markdown 装饰', () => {

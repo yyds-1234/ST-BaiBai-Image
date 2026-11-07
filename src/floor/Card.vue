@@ -161,6 +161,16 @@ const isDshSlot = computed(() => isDshPlaceholder({ dsh: props.dsh }));
 /** 占位卡片副标题:告诉用户「这张不是直接出图,是交给 DSH 写串」。 */
 const dshSubtitle = computed(() => (isDshSlot.value ? describeDshPlaceholder(props.dsh) : ''));
 /**
+ * 占位卡片 + 本地后端 = 这张图出不了。
+ *
+ * 占位里只有散文、没有 tag:ComfyUI/NAI 拿到的提示词会是空串,入口校验会报
+ * 「正向提示词不能为空」。那句话对着一张写满画面描述的卡片毫无解释力,
+ * 所以按钮干脆不给,直接告诉他该切到哪 —— 而不是让他先点一次、再读一句错话。
+ */
+const dshNeedsBridge = computed(() => isDshSlot.value && !dshActive.value);
+/** 占位卡片落在本地渠道时给的说明。与 generate.ts 的拦截文案同一口径,改一处要改两处。 */
+const DSH_NEEDS_BRIDGE_HINT = '这张是「画面占位」，需要交给 DSH 写手写成提示词：到柏宝绘「渠道 → DSH 写手」切换渠道后再点。';
+/**
  * 后端是否已配齐(决定给「生成图片」按钮还是配置引导)。
  * 判据在 generate.ts 的 backendStatus 里,与真正出图、与公开接口同源——
  * 曾经这里自己判一套,改了 ComfyUI 简易模式的校验就得两处同步改。
@@ -565,14 +575,14 @@ onMounted(() => {
 
       <!-- 无图且空闲:生成入口 / 配置引导 -->
       <div v-if="!imageSrc && !busy" class="bbi-figure__pending">
-        <button v-if="configured" class="bbi-figure__generate" type="button" @click="generate">
+        <button v-if="configured && !dshNeedsBridge" class="bbi-figure__generate" type="button" @click="generate">
           <Icon name="palette" :size="15" />
           {{ phase === 'error' ? '重试' : isDshSlot ? '交给 DSH 出图' : '生成图片' }}
         </button>
-        <p v-else class="bbi-figure__hint">{{ pendingHint }}</p>
+        <p v-else class="bbi-figure__hint">{{ dshNeedsBridge ? DSH_NEEDS_BRIDGE_HINT : pendingHint }}</p>
         <!-- 占位卡片副标题:说清这张不是直接出图,而是把散文交给 DSH 写串。
              不加这一行,用户看到一张只有「生成图片」的空白卡片会以为是坏了。 -->
-        <p v-if="configured && dshSubtitle" class="bbi-figure__hint">{{ dshSubtitle }}</p>
+        <p v-if="configured && dshSubtitle && !dshNeedsBridge" class="bbi-figure__hint">{{ dshSubtitle }}</p>
       </div>
 
       <!-- 提示词已改:角标提示,不再整图压暗 -->

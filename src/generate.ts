@@ -256,12 +256,24 @@ export async function generateImage(
   progress: GenerateProgress = {},
 ): Promise<GenerateOutput> {
   const status = backendStatus();
+  const isDsh = status.backend === 'dshbridge';
+  // 占位卡片(只有 <dsh>、没有 tag)撞上本地后端时,必须**最先**拦下并说清该切哪个渠道。
+  // 放在 configured 判断**之前**是刻意的:这类卡片出错时用户看到的若是
+  // 「正向提示词不能为空」或「当前工作流预设未填写」,两条都在说别的事——真正的原因是
+  // 他在一张写满画面描述的卡片上按了生成,而出图渠道根本读不懂占位。
+  // 判据只看「有散文、没 tag」:这类卡片本来就是给 DSH 写手准备的,本地后端拼不出一条串。
+  const dshScene = (input.dsh ?? '').trim();
+  if (!isDsh && dshScene && !input.prompt.trim()) {
+    throw new Error(
+      '这张卡片是「画面占位」，画面描述要交给 DSH 写手写成提示词；'
+      + '当前出图渠道是本地后端，读不懂占位。请到柏宝绘「渠道 → DSH 写手」切换渠道后再出图。',
+    );
+  }
   // 兜底:卡片侧已用 configured 拦在按钮上,公开接口侧也会先报 not_configured。
   // 真漏到这里说明上游判据漂了,宁可明说也别发一个注定 401/404 的请求。
   if (!status.configured) throw new Error(status.reason || '出图后端未配置');
 
   const isNai = status.backend === 'nai';
-  const isDsh = status.backend === 'dshbridge';
   const characters = input.characters ?? [];
   // 支持与否由后端说了算:ComfyUI 恒不支持;NAI 看模型是否 4.5/V5
   const charactersApplied = characters.length > 0 && status.supportsCharacters;
@@ -289,7 +301,7 @@ export async function generateImage(
       //
       // 场景来源:优先 <dsh> 占位;占位为空时回落 prompt,这样把同一条卡片切到老 tag 上
       // 也能出图(否则「换了后端,卡片点什么都没反应」)。
-      const scene = (input.dsh ?? '').trim() || input.prompt.trim();
+      const scene = dshScene || input.prompt.trim();
       if (!scene) throw new Error('这条占位没有画面描述,无法交给 DSH');
       const conn = effectiveDshBridge();
       const output = await generateDshImage(

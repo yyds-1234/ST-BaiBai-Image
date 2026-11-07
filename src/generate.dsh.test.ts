@@ -133,6 +133,23 @@ describe('generateImage: dsh 分支', () => {
     expect(body.scene).toBe('1girl, rooftop');
   });
 
+
+  it('占位卡片撞上本地后端 → 分派之前就拦下，并说清该切哪个渠道', async () => {
+    // 不拦的话这两句会一路走到 comfyui.ts / nai.ts 入口那两句「正向提示词不能为空」：
+    // 用户在一张写满画面描述的卡片上点了生成，却被告诉「提示词是空的」。
+    settings.defaultBackend = 'comfyui';
+    settings.comfyui.url = 'http://127.0.0.1:8188';
+    await expect(generateImage({ prompt: '', dsh: '傍晚的天台，她靠着栏杆回头', size: 'portrait', seed: 1 }))
+      .rejects.toThrow('画面占位');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('没有 <dsh> 的老 tag 不受这条拦截影响（没占位的卡片照旧报各自的错）', async () => {
+    settings.defaultBackend = 'comfyui';
+    settings.comfyui.url = '';
+    await expect(generateImage({ prompt: '1girl, rooftop', size: 'portrait', seed: 1 }))
+      .rejects.not.toThrow('画面占位');
+  });
   it('两样都空 → 当场报错，不发一个注定 400 的请求', async () => {
     dshReady();
     await expect(generateImage({ prompt: '  ', dsh: '  ', size: 'portrait', seed: 1 })).rejects.toThrow(
