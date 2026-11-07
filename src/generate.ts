@@ -36,6 +36,7 @@ import {
 import { effectiveOrientation, parseSize, pickSize, type Orientation } from '@/backends/size';
 import { acquireNaiSlot } from '@/floor/genQueue';
 import type { GenerationMeta } from '@/generationMeta';
+import { channelLabel } from '@/pages/backend/channelSwitch';
 import { activeComfyPreset, activeNaiEndpoint, activeOrientationLock, effectiveComfyConn, effectiveDshBridge, effectiveNai, settings, type BackendId } from '@/state/settings';
 
 /** 一次生成的输入。与协议层 ImageInsertion 同形,但不含正文位置信息。 */
@@ -275,9 +276,14 @@ export async function generateImage(
   // 判据只看「有散文、没 tag」:这类卡片本来就是给 DSH 写手准备的,本地后端拼不出一条串。
   const dshScene = (input.dsh ?? '').trim();
   if (!isDsh && dshScene && !input.prompt.trim()) {
+    // 报错里**点名当前是哪条渠道**:只说「请去渠道页切换」的话,用户往往正站在那一页
+    // (页签只切「看哪个面板」的历史包袱,现已合并成同一动作,见 pages/backend/index.vue),
+    // 于是这句话读起来像在让他做一件他刚做过的事。
+    const label = channelLabel(status.backend);
     throw new Error(
-      '这张卡片是「画面占位」，画面描述要交给 DSH 写手写成提示词；'
-      + '当前出图渠道是本地后端，读不懂占位。请到柏宝绘「渠道 → DSH 写手」切换渠道后再出图。',
+      `这张卡片是「画面占位」，画面描述要交给 DSH 写手写成提示词；`
+      + `当前出图渠道是「${label}」，读不懂占位。`
+      + '请到柏宝绘「渠道」页切到「DSH 写手」（点页签即可切换）后再出图。',
     );
   }
   // 兜底:卡片侧已用 configured 拦在按钮上,公开接口侧也会先报 not_configured。

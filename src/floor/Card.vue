@@ -35,6 +35,7 @@ import {
 } from '@/floor/storage';
 import { isTagPlanning } from '@/floor/tagPlanState';
 import { formatGenerationMeta } from '@/generationMeta';
+import { channelLabel } from '@/pages/backend/channelSwitch';
 import { activeComfyPreset, activeOrientationLock, imageDisplayMaxHeight, settings } from '@/state/settings';
 import { chineseAppearanceForText, rolesForText } from '@/state/charTags';
 import { beginImage, failImage, finishImage, patchImagePrompt, safeHistory } from '@/state/history';
@@ -168,8 +169,21 @@ const dshSubtitle = computed(() => (isDshSlot.value ? describeDshPlaceholder(pro
  * 所以按钮干脆不给,直接告诉他该切到哪 —— 而不是让他先点一次、再读一句错话。
  */
 const dshNeedsBridge = computed(() => isDshSlot.value && !dshActive.value);
-/** 占位卡片落在本地渠道时给的说明。与 generate.ts 的拦截文案同一口径,改一处要改两处。 */
-const DSH_NEEDS_BRIDGE_HINT = '这张是「画面占位」，需要交给 DSH 写手写成提示词：到柏宝绘「渠道 → DSH 写手」切换渠道后再点。';
+/**
+ * 占位卡片落在本地渠道时给的说明。
+ *
+ * 【为什么不只说「去渠道页切换」】那句话在这里等于一句废话:用户通常**正站在渠道页**上,
+ * 点过「DSH 写手」页签,看到的就是 DSH 面板,然后回来发现卡片还是这句话。原因是页签当时
+ * 只切「看哪个面板」、不切真正出图的那条(settings.defaultBackend)——现在页签已经合并成
+ * 一个动作了,但文案仍要把「当前到底在走哪条」说出来,否则同一个困惑会以另一种形式复现。
+ */
+const DSH_NEEDS_BRIDGE_HINT = '这张是「画面占位」，需要交给 DSH 写手写成提示词。';
+/** 当前渠道的中文名(说清「你现在在走 X」,而不是让用户自己猜)。 */
+const activeChannelLabel = computed(() => channelLabel(settings.defaultBackend));
+/** 一键切到 DSH 写手:卡片上就地解决,不必再去找哪个页签才真的改渠道。 */
+function switchToDsh(): void {
+  settings.defaultBackend = 'dshbridge';
+}
 /**
  * 后端是否已配齐(决定给「生成图片」按钮还是配置引导)。
  * 判据在 generate.ts 的 backendStatus 里,与真正出图、与公开接口同源——
@@ -579,11 +593,23 @@ onMounted(() => {
 
       <!-- 无图且空闲:生成入口 / 配置引导 -->
       <div v-if="!imageSrc && !busy" class="bbi-figure__pending">
-        <button v-if="configured && !dshNeedsBridge" class="bbi-figure__generate" type="button" @click="generate">
-          <Icon name="palette" :size="15" />
-          {{ phase === 'error' ? '重试' : isDshSlot ? '交给 DSH 出图' : '生成图片' }}
-        </button>
-        <p v-else class="bbi-figure__hint">{{ dshNeedsBridge ? DSH_NEEDS_BRIDGE_HINT : pendingHint }}</p>
+        <!-- 两态互斥,别把它们写成并列的 v-if / v-else-if 链:占位撞本地渠道时给的是
+             「说明 + 一键切换」,其余情况给「生成按钮 或 配置引导」,两组内部结构不同。 -->
+        <template v-if="dshNeedsBridge">
+          <p class="bbi-figure__hint">{{ DSH_NEEDS_BRIDGE_HINT }}</p>
+          <p class="bbi-figure__hint">当前出图渠道是「{{ activeChannelLabel }}」，读不懂占位。</p>
+          <button class="bbi-figure__generate" type="button" @click="switchToDsh">
+            <Icon name="plug" :size="15" />
+            改用 DSH 写手出图
+          </button>
+        </template>
+        <template v-else>
+          <button v-if="configured" class="bbi-figure__generate" type="button" @click="generate">
+            <Icon name="palette" :size="15" />
+            {{ phase === 'error' ? '重试' : isDshSlot ? '交给 DSH 出图' : '生成图片' }}
+          </button>
+          <p v-else class="bbi-figure__hint">{{ pendingHint }}</p>
+        </template>
         <!-- 占位卡片副标题:说清这张不是直接出图,而是把散文交给 DSH 写串。
              不加这一行,用户看到一张只有「生成图片」的空白卡片会以为是坏了。 -->
         <p v-if="configured && dshSubtitle && !dshNeedsBridge" class="bbi-figure__hint">{{ dshSubtitle }}</p>

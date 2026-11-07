@@ -174,6 +174,48 @@ describe('generateImage: dsh 分支', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('拦截文案点名当前渠道：站在渠道页还被告知「去渠道页切换」的困惑不再复现', async () => {
+    // 这句文案的唯一价值是「让我知道现在到底在走哪条」。曾经它只说「请到渠道页切换」，
+    // 而用户往往正站在那一页（页签当时只切「看哪个面板」）——那句话读起来像在让他做事。
+    const message = await rejectMessage('nai', '傍晚的天台，她靠着栏杆回头');
+    expect(message).toContain('画面占位');
+    expect(message).toContain('NAI');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('点名的是中文渠道名，不是内部 id', async () => {
+    const message = await rejectMessage('nai', '傍晚的天台，她靠着栏杆回头');
+    // 必须出现「NAI」，且不许把裸 id 漏出去（用户不认识 dshbridge 这类字符串）
+    expect(message).toContain('NAI');
+    expect(message).not.toContain('"nai"');
+    expect(message).not.toContain("'nai'");
+  });
+
+  it('ComfyUI 渠道同样点名，且点名的是它自己而不是别条', async () => {
+    const message = await rejectMessage('comfyui', '窗边的侧影');
+    expect(message).toContain('ComfyUI');
+    expect(message).not.toContain('NAI');
+  });
+
+  /** 把某个渠道下「占位撞本地后端」的报错文案抓出来（不抛，只取 message）。 */
+  async function rejectMessage(backend: 'comfyui' | 'nai' | 'dshbridge', dsh: string): Promise<string> {
+    settings.defaultBackend = backend;
+    if (backend === 'nai') {
+      settings.nai.model = 'nai-diffusion-5-full';
+      settings.nai.endpoints = [
+        { id: 'ep1', name: 'ep', url: 'http://127.0.0.1:8188', key: 'k', model: settings.nai.model },
+      ] as unknown as typeof settings.nai.endpoints;
+      settings.nai.activeEndpointId = 'ep1';
+    }
+    if (backend === 'comfyui') settings.comfyui.url = 'http://127.0.0.1:8188';
+    try {
+      await generateImage({ prompt: '', dsh, size: 'portrait', seed: 1 });
+    } catch (error) {
+      return (error as Error).message;
+    }
+    throw new Error('预期这条占位被拦下，却成功返回了');
+  }
+
   it('没有 <dsh> 的老 tag 不受这条拦截影响（没占位的卡片照旧报各自的错）', async () => {
     settings.defaultBackend = 'comfyui';
     settings.comfyui.url = '';
