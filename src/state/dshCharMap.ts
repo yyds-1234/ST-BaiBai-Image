@@ -123,25 +123,25 @@ export interface DshAutoPick {
 }
 
 /**
- * 把 DSH「自动认角色」认出来的人**自动建进映射表**（桥接 2.15.0；2.16.0 起档案也建）。
+ * 把 DSH「自动认角色」认出来的**动漫角色**自动建进映射表（桥接 2.15.0）。
  *
  * 为什么需要它:认人的结果是 `{ label: '胡桃', ref: 'hu tao (genshin impact)' }`，但下一单
- * 柏宝绘并不知道「胡桃」是谁 —— 没有映射就还得让 DSH 再认一次(动漫线那趟要问模型：两三秒，
- * 且可能这次认成 A、下次认成 B)。把这一对存成映射后，下一单开头就是
+ * 柏宝绘并不知道「胡桃」是谁 —— 没有映射就还得让 DSH 再认一次(模型那趟两三秒，且可能这次
+ * 认成 A、下次认成 B)。把这一对存成映射后，下一单开头就是
  * `characters: ['胡桃：hu tao (genshin impact)']`，DSH 走的是**正常的机械查表**
  * (`lookupCatalog` 精确命中)，一次模型都不用问。
  *
- * 五条纪律:
- *   1. **两种都建**：档案(`kind: 'archive'`, DSH 认到的默认线情形)与动漫角色(`kind: 'catalog'`)。
- *      只建动漫会让默认线(moss-real，不查动漫表)下**一行都不建** —— 用户看到的就是
- *      「认出来了但角色表里没有」，而这个通道本来就是为了让下一单不再重认。
- *   2. **线照抄 `pick.line`，不自己猜**：档案用自己的线(通用档 = 空串，哪条线都能用)；
- *      动漫角色用本单生效的线。绑错线在下一单会被静默跳过，所以宁可这一单不建也不瞎绑:
- *      动漫角色没有线(空串)就跳过。
+ * 四条纪律:
+ *   1. **只建动漫(`kind: 'catalog'`)的**（2026-11-14 用户口径）：档案(`kind: 'archive'`)那一路
+ *      **不建** —— 真人线本来就不该自动认人/自动建档，而档案的名字由用户在「档案映射」里显式
+ *      指定才是对的；把「DSH 认出来的档案」自动写成映射行是错误行为。DSH 侧现在也只在
+ *      动漫线上认人（`autoCastPlan`），所以这里通常只会收到 catalog。
+ *   2. **线照抄 `pick.line`**（2.16.0 起 DSH 每条都给，动漫角色 = 本单生效的线）：
+ *      缺线时才退回调用方给的那条；两处都空就不建 —— 绑错线在下一单会被静默跳过。
  *   3. **用户手挑的行不动**：同名已存在时只在 `auto: true` 的行上改指向；手挑的行哪怕 DSH 这次
  *      认成了别的条目，也尊重用户的选择(他可能是故意的)。
  *   4. 受 `DSH_CHAR_MAP_MAX` 约束：满了就不再加，返回的 `added` 为空 —— 调用方据此不弹提示。
- *   5. 同一批 picks 里同名只建一条(后到的覆盖先到的)，免得面板上两行抢同一个人。
+ *      同一批 picks 里同名只建一条(后到的覆盖先到的)。
  *
  * 纯函数，不 import settings、不碰网络，单测能直接跑。
  *
@@ -166,32 +166,27 @@ export function mergeAutoMappings(
   const fallbackLine = (line ?? '').trim();
 
   for (const pick of Array.isArray(picks) ? picks : []) {
-    const kind: DshCharMapKind | '' = pick?.kind === 'catalog'
-      ? 'catalog'
-      : pick?.kind === 'archive' ? 'archive' : '';
-    if (!kind) continue;
+    // 只建动漫角色；档案不建（见上面纪律 1）。
+    if (pick?.kind !== 'catalog') continue;
     const name = String(pick.label ?? '').trim().slice(0, NAME_MAX);
     const ref = String(pick.ref ?? '').trim().slice(0, REF_MAX);
     if (!name || !ref) continue;
-    // 线照抄 pick.line：档案用它自己的线（通用档 = 空串），动漫角色用本单的线。
-    // 动漫角色缺线就跳过（空线建出来在下一单会被静默跳过，等于白建）。
-    const bindLine = kind === 'archive'
-      ? String(pick.line ?? '').trim()
-      : String(pick.line ?? '').trim() || fallbackLine;
-    if (kind === 'catalog' && !bindLine) continue;
+    // 线照抄 pick.line（动漫角色 = 本单的线）；缺线时用调用方那条，都没有就不建。
+    const bindLine = String(pick.line ?? '').trim() || fallbackLine;
+    if (!bindLine) continue;
 
     const existing = out.find(item => item.name === name);
     if (existing !== undefined) {
       if (existing.auto !== true) continue;
-      if (existing.kind === kind && existing.ref === ref && existing.line === bindLine) continue;
-      existing.kind = kind;
+      if (existing.kind === 'catalog' && existing.ref === ref && existing.line === bindLine) continue;
+      existing.kind = 'catalog';
       existing.ref = ref;
       existing.line = bindLine;
       updated.push(existing);
       continue;
     }
     if (out.length >= cap) break;
-    const row: DshCharMapping = { name, kind, ref, line: bindLine, auto: true };
+    const row: DshCharMapping = { name, kind: 'catalog', ref, line: bindLine, auto: true };
     out.push(row);
     added.push(row);
   }

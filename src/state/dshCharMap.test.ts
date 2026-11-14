@@ -163,7 +163,7 @@ describe('planDshCharacters:出图前算「谁按档案画、谁按角色库画�
 
 describe('mergeAutoMappings:DSH 认出来后自动建档（桥接 2.15.0 / 2.16.0）', () => {
   const CATALOG_PICK = { label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog', line: 'moss-anime' };
-  // 通用档案：DSH 那条档案本身不绑线，所以 pick.line 是空串 —— 建出来的行哪条线都能用。
+  // 档案那一路一律不建（2026-11-14 用户口径：真人线不自动认人/建档，档案映射必须手动配）。
   const GENERIC_ARCHIVE = { label: '瑶瑶', ref: '26-小静', kind: 'archive', line: '' };
   const BOUND_ARCHIVE = { label: '林夏', ref: '40-林夏', kind: 'archive', line: 'moss-real' };
 
@@ -188,35 +188,26 @@ describe('mergeAutoMappings:DSH 认出来后自动建档（桥接 2.15.0 / 2.16.
     expect(plan.characters).toEqual(['胡桃：hu tao (genshin impact)']);
   });
 
-  it('档案也建：默认线（不查动漫表）下认到的人照样进映射表', () => {
-    const merged = mergeAutoMappings([], [GENERIC_ARCHIVE], 'moss-real');
-    expect(merged.added).toEqual([{ name: '瑶瑶', kind: 'archive', ref: '26-小静', line: '', auto: true }]);
-    // 通用档案 = 不绑线：换到动漫线也照发（绑了 moss-real 反而会被跨线跳过）。
-    for (const line of ['moss-real', 'moss-anime']) {
-      const plan = planDshCharacters({ text: '瑶瑶回头笑', roles: [], mappings: merged.mappings, line });
-      expect(plan.characters).toEqual(['瑶瑶：26-小静']);
+  it('档案一律不建：通用档案、绑线档案、真人线认到的档案，都不进映射表', () => {
+    for (const pick of [GENERIC_ARCHIVE, BOUND_ARCHIVE]) {
+      const merged = mergeAutoMappings([], [pick], 'moss-real');
+      expect(merged.mappings).toEqual([]);
+      expect(merged.added).toEqual([]);
+      expect(merged.updated).toEqual([]);
     }
+    // 混着回来也只建动漫那一条（DSH 正常不会再在真人线认人，这是防御）。
+    const merged = mergeAutoMappings([], [BOUND_ARCHIVE, CATALOG_PICK], 'moss-anime');
+    expect(merged.added.map(row => row.kind)).toEqual(['catalog']);
   });
 
-  it('绑线的档案：线照抄档案自己的那条，不跟着本单的线走', () => {
-    const merged = mergeAutoMappings([], [BOUND_ARCHIVE], 'moss-anime');
-    expect(merged.added).toEqual([{ name: '林夏', kind: 'archive', ref: '40-林夏', line: 'moss-real', auto: true }]);
-    // 下一单切到别的线：这条被 lineGate 跳过，但仍留着（切回来就能用）。
-    const plan = planDshCharacters({ text: '林夏', roles: [], mappings: merged.mappings, line: 'moss-anime' });
-    expect(plan.characters).toEqual([]);
-    expect(plan.skipped).toEqual([{ name: '林夏', ref: '40-林夏', reason: 'line' }]);
-  });
-
-  it('老插件（2.15.0，pick 不带 line）的动漫角色退回本单的线，档案按通用处理', () => {
+  it('老插件（2.15.0，pick 不带 line）的动漫角色退回本单的线', () => {
     const merged = mergeAutoMappings(
       [],
-      [{ label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog' },
-        { label: '瑶瑶', ref: '26-小静', kind: 'archive' }],
+      [{ label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog' }],
       'moss-anime',
     );
     expect(merged.added).toEqual([
       { name: '胡桃', kind: 'catalog', ref: 'hu tao (genshin impact)', line: 'moss-anime', auto: true },
-      { name: '瑶瑶', kind: 'archive', ref: '26-小静', line: '', auto: true },
     ]);
   });
 
@@ -254,25 +245,19 @@ describe('mergeAutoMappings:DSH 认出来后自动建档（桥接 2.15.0 / 2.16.
     expect(merged.mappings[0]).toEqual(expected);
   });
 
-  it('同一条自动行这次被认成档案（或反过来）→ 整行改指向，不留两套长相', () => {
-    const old: DshCharMapping = { name: '瑶瑶', kind: 'catalog', ref: 'yao yao (x)', line: 'moss-real', auto: true };
-    const merged = mergeAutoMappings([old], [GENERIC_ARCHIVE], 'moss-real');
-    expect(merged.updated).toEqual([{ name: '瑶瑶', kind: 'archive', ref: '26-小静', line: '', auto: true }]);
-  });
-
   it('同一个名字重复出现只建一条（并列两次不会变成两行）', () => {
     const merged = mergeAutoMappings([], [CATALOG_PICK, CATALOG_PICK], 'moss-anime');
     expect(merged.mappings).toHaveLength(1);
     expect(merged.added).toHaveLength(1);
   });
 
-  it('动漫角色缺线（老插件 + 调用方也没线）就不建；档案不受影响', () => {
+  it('动漫角色缺线（老插件 + 调用方也没线）就不建 —— 绑错线等于白建', () => {
     const merged = mergeAutoMappings(
       [],
-      [{ label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog' }, GENERIC_ARCHIVE],
+      [{ label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog' }],
       '  ',
     );
-    expect(merged.mappings).toEqual([{ name: '瑶瑶', kind: 'archive', ref: '26-小静', line: '', auto: true }]);
+    expect(merged.mappings).toEqual([]);
   });
 
   it('行数到上限就不再追加，但仍返回已有表', () => {
