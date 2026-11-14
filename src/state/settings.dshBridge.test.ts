@@ -60,6 +60,8 @@ describe('老配置升级', () => {
       // 自动认角色默认开：与 DSH 侧 bridge.autoCast 的默认值（smart）对齐 ——
       // 两边默认必须是同一个答案，否则「升级完什么都没变」与「升级完突然多两个人」都会发生。
       autoCast: true,
+      // 自动建档默认开：认出来的动漫角色写进映射，下一单直接机械查表（不再跑识别模型）。
+      autoMap: true,
     });
   });
 
@@ -108,6 +110,7 @@ describe('dshBridge 逐字段兜底', () => {
         // 关掉的开关必须留住：它决定「没配映射的人要不要 DSH 自己认」，被默认值顶回 true
         // 会让用户在面板上关掉、刷新又自己打开。
         autoCast: false,
+        autoMap: false,
       },
     });
     expect(settings.dshBridge).toEqual({
@@ -118,6 +121,7 @@ describe('dshBridge 逐字段兜底', () => {
       count: 3,
       charMappings: [{ name: '林夏', kind: 'archive', ref: '26-小静', line: 'moss-real' }],
       autoCast: false,
+      autoMap: false,
     });
   });
 
@@ -176,6 +180,7 @@ describe('dshBridge 逐字段兜底', () => {
       count: 1,
       charMappings: [],
       autoCast: true,
+      autoMap: true,
     });
   });
 

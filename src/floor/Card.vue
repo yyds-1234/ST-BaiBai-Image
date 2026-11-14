@@ -38,7 +38,7 @@ import { formatGenerationMeta } from '@/generationMeta';
 import { channelLabel } from '@/pages/backend/channelSwitch';
 import { activeComfyPreset, activeOrientationLock, effectiveDshBridge, imageDisplayMaxHeight, settings } from '@/state/settings';
 import { chineseAppearanceForText, rolesForText, rolesWithoutAppearance } from '@/state/charTags';
-import { planDshCharacters } from '@/state/dshCharMap';
+import { mergeAutoCatalogMappings, planDshCharacters } from '@/state/dshCharMap';
 import { beginImage, failImage, finishImage, patchImagePrompt, safeHistory } from '@/state/history';
 import { copyText } from '@/st/clipboard';
 import { getContext } from '@/st/context';
@@ -417,7 +417,7 @@ async function generate(): Promise<void> {
     );
     // 闸门、后端分派都在 generateImage 里(公开接口走同一条路,见 generate.ts);
     // 本组件只把进度回调接到自己的槽位运行态上。
-    const { result, meta, finalPrompt, finalNegative, dshAutoCast } = await generateImage({ ...job, seed }, signal, {
+    const { result, meta, finalPrompt, finalNegative, dshAutoCast, dshLine } = await generateImage({ ...job, seed }, signal, {
       onStart: () => setGenPhase(slot, token, 'generating'),
       // 拼装完成即落账,**早于请求**:失败/被拦的请求也要能看清它本来要发什么。
       onPrompt: info => {
@@ -445,6 +445,32 @@ async function generate(): Promise<void> {
         `这张图里的人 DSH 自己认出来了：${autoCastNames.join('、')}`
         + `（${dshAutoCast?.source === 'smart' ? '模型报名字 + 动漫表核对' : '按名字对上了档案 / 别名表'}）。`
         + '原因：占位里叫得出名字、但没配档案映射。不想这样就在「渠道 → DSH 写手」里关掉「自动认角色」。',
+        '柏宝绘',
+      );
+    }
+    // 自动建档（桥接 2.15.0）：把「正文里的名字 → 查表英文名」存进档案映射。
+    // 下一单开头就是 `characters: ['胡桃：hu tao (genshin impact)']` —— DSH 走正常的机械查表，
+    // 不再为同一个名字跑那趟识别模型（也避免这次认成 A、下次认成 B）。
+    // 只建动漫映射；用户手挑的行不会被覆盖（见 state/dshCharMap 的 mergeAutoCatalogMappings）。
+    let builtMappings: ReturnType<typeof mergeAutoCatalogMappings>['added'] = [];
+    if (settings.dshBridge.autoMap && dshAutoCast !== undefined && dshAutoCast.picks.length > 0) {
+      // 绑线用 DSH **实际生效**的那条（result.line）：请求里的 configSet 可能只是空串。
+      const usedLine = (dshLine ?? '').trim() || effectiveDshBridge().configSet;
+      const merged = mergeAutoCatalogMappings(
+        settings.dshBridge.charMappings,
+        dshAutoCast.picks,
+        usedLine,
+      );
+      if (merged.added.length > 0 || merged.updated.length > 0) {
+        settings.dshBridge.charMappings = merged.mappings;
+        builtMappings = merged.added;
+      }
+    }
+    if (builtMappings.length) {
+      toastr.success(
+        `已自动建档：${builtMappings.map(item => `${item.name} → ${item.ref}`).join('、')}`
+        + `（绑定 ${builtMappings[0].line}）。下次同一个名字直接查表，不再重新识别；`
+        + '映射可在「渠道 → DSH 写手 → 档案映射」里删。',
         '柏宝绘',
       );
     }

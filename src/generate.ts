@@ -25,7 +25,7 @@
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import { dshSceneForBridge } from '@/autoTag/dshPlaceholder';
 import { comfySimpleParams, validateSimpleConfig } from '@/backends/comfyTemplates';
-import { generateDshImage } from '@/backends/dshBridge';
+import { generateDshImage, type DshAutoCast } from '@/backends/dshBridge';
 import { generateComfyImage, previewComfyPrompt, randomSeed, type ComfyImageResult } from '@/backends/comfyui';
 import {
   fullNegativePrompt,
@@ -171,7 +171,14 @@ export interface GenerateOutput {
    * 卡片用它弹一句「这张图里的人是谁认出来的」—— 图注那行只放得下配置集/seed，
    * 而「没配映射却出现了正确长相」这件事必须有出处，否则用户查不到是谁决定的。
    */
-  dshAutoCast?: { source: string; characters: string[]; notes: string[] };
+  dshAutoCast?: DshAutoCast;
+  /**
+   * DSH 这次实际生效的配置集 id（`result.line`）。只有 DSH 渠道有。
+   *
+   * 自动建档（`autoMap`）要按它把映射绑到**真正生效**的那条线上：请求里的 `configSet` 可能
+   * 是空串（用 DSH 默认集），拿它去绑会绑成「无主」——动漫映射线不符时下一单会被静默跳过。
+   */
+  dshLine?: string;
 }
 
 /**
@@ -342,7 +349,9 @@ export async function generateImage(
     let finalPrompt = '';
     let finalNegative = '';
     // DSH 自动认角色的结果：只有 DSH 那条分支会填，其它后端恒空（返回时按 undefined 处理）。
-    let dshAutoCast: { source: string; characters: string[]; notes: string[] } | undefined;
+    let dshAutoCast: DshAutoCast | undefined;
+    // DSH 实际生效的配置集：自动建档按它绑线（请求参数可能只是空串）。
+    let dshLine = '';
     if (isDsh) {
       // DSH 写手:柏宝绘不拼提示词,只把画面散文原样送过去。故这里**没有** onPrompt 预览
       // ——成品串是 DSH 写出来的,发请求前根本不存在,硬编一个假的只会让历史记错。
@@ -388,6 +397,7 @@ export async function generateImage(
       );
       result = output;
       dshAutoCast = output.autoCast;
+      dshLine = output.line;
       // DSH 回了成品串就用它(那是「这次究竟发了什么」的唯一真相);没回就记散文本身,
       // 至少比一个空串更能说明这张图画的是什么。
       finalPrompt = output.prompt.trim() || scene;
@@ -482,8 +492,10 @@ export async function generateImage(
       finalNegative,
       meta,
       ...dshAutoCast === undefined ? {} : { dshAutoCast },
+      ...dshLine ? { dshLine } : {},
     };
   } finally {
     release?.();
   }
 }
+

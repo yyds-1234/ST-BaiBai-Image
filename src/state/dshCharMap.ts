@@ -34,6 +34,13 @@ export interface DshCharMapping {
    * 会让整单报错(不是淡出)。柏宝绘在发请求前按这个字段自己先滤掉,比让对方报错更容易解释。
    */
   line: string;
+  /**
+   * 这条是**DSH 自动认角色**建的行(桥接 2.15.0),不是用户手挑的。
+   *
+   * 两个用途:面板上标出来(让人知道它从哪来、可以删),以及「DSH 下次认成同一个人但表名变了」时
+   * 允许改写它 —— 用户手挑的行永远不动,那是他自己的决定。
+   */
+  auto?: boolean;
 }
 
 /** 映射行数上限。超了手抖加进来的空行会把面板撑满,也会让出图前那次匹配变慢。 */
@@ -65,7 +72,13 @@ export function normalizeDshCharMappings(raw: unknown): DshCharMapping[] {
     if (!name || !ref || !kind) continue;
     if (seen.has(name)) continue;
     seen.add(name);
-    out.push({ name, kind, ref, line: typeof o.line === 'string' ? o.line.trim() : '' });
+    out.push({
+      name,
+      kind,
+      ref,
+      line: typeof o.line === 'string' ? o.line.trim() : '',
+      ...o.auto === true ? { auto: true } : {},
+    });
     if (out.length >= DSH_CHAR_MAP_MAX) break;
   }
   return out;
@@ -93,6 +106,69 @@ export function dshMappingLabel(mapping: Pick<DshCharMapping, 'kind' | 'ref' | '
   const head = mapping.kind === 'catalog' ? '动漫' : '档案';
   const line = mapping.line.trim();
   return line ? `${head} · ${mapping.ref}（${line}）` : `${head} · ${mapping.ref}`;
+}
+
+/**
+ * 把 DSH「自动认角色」认出来的动漫角色**自动建进映射表**(桥接 2.15.0)。
+ *
+ * 为什么需要它:认人的结果是 `{ label: '胡桃', ref: 'hu tao (genshin impact)' }`，但下一单
+ * 柏宝绘并不知道「胡桃」是谁 —— 没有映射就还得让 DSH 再认一次(模型那趟两三秒，且可能这次认成 A、
+ * 下次认成 B)。把这一对存成映射后，下一单开头就是 `characters: ['胡桃：hu tao (genshin impact)']`，
+ * DSH 走的是**正常的机械查表**(lookupCatalog 精确命中)，一次模型都不用问。
+ *
+ * 四条纪律:
+ *   1. **只建动漫(`kind: 'catalog'`)的**：档案那条 DSH 已经按名字认到了，下一单照样能认到，
+ *      存进映射反而要多存一份线(档案本身绑线，绑错就被跳过)。
+ *   2. **线必须与这一单实际生效的配置集一致**：动漫映射线不符时下一单会被静默跳过 ——
+ *      所以没有线(空串)就什么都不建，宁可下一单再认一次。
+ *   3. **用户手挑的行不动**：同名已存在时只在 `auto: true` 的行上改指向；手挑的行哪怕 DSH 这次
+ *      认成了别的条目，也尊重用户的选择(他可能是故意的)。
+ *   4. 受 `DSH_CHAR_MAP_MAX` 约束：满了就不再加，返回的 `added` 为空 —— 调用方据此不弹提示。
+ *
+ * 纯函数，不 import settings、不碰网络，单测能直接跑。
+ *
+ * @param mappings 现有映射表(任意脏数据都行，进来先归一)
+ * @param picks DSH 回包里的 `autoCast.picks` / `/cast/detect` 的 `picks`
+ * @param line 这一单**实际生效**的配置集 id(`result.line`，不是请求参数)
+ * @param options.max 行数上限(默认 `DSH_CHAR_MAP_MAX`)
+ * @returns `{ mappings, added, updated }`：`added` 是新建的行，`updated` 是自动行改了指向的
+ */
+export function mergeAutoCatalogMappings(
+  mappings: DshCharMapping[],
+  picks: { label: string; ref: string; kind: string }[],
+  line: string,
+  options: { max?: number } = {},
+): { mappings: DshCharMapping[]; added: DshCharMapping[]; updated: DshCharMapping[] } {
+  const cap = Number.isFinite(options.max) && (options.max as number) > 0
+    ? Math.floor(options.max as number)
+    : DSH_CHAR_MAP_MAX;
+  const out = normalizeDshCharMappings(mappings).map(item => ({ ...item }));
+  const added: DshCharMapping[] = [];
+  const updated: DshCharMapping[] = [];
+  const current = (line ?? '').trim();
+  if (!current) return { mappings: out, added, updated };
+
+  for (const pick of Array.isArray(picks) ? picks : []) {
+    if (pick?.kind !== 'catalog') continue;
+    const name = String(pick.label ?? '').trim().slice(0, NAME_MAX);
+    const ref = String(pick.ref ?? '').trim().slice(0, REF_MAX);
+    if (!name || !ref) continue;
+    const existing = out.find(item => item.name === name);
+    if (existing !== undefined) {
+      if (existing.auto !== true) continue;
+      if (existing.kind === 'catalog' && existing.ref === ref && existing.line === current) continue;
+      existing.kind = 'catalog';
+      existing.ref = ref;
+      existing.line = current;
+      updated.push(existing);
+      continue;
+    }
+    if (out.length >= cap) break;
+    const row: DshCharMapping = { name, kind: 'catalog', ref, line: current, auto: true };
+    out.push(row);
+    added.push(row);
+  }
+  return { mappings: out, added, updated };
 }
 
 /** 出图前算出来的角色清单(见 planDshCharacters)。 */

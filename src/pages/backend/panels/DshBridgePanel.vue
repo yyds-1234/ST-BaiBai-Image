@@ -441,14 +441,23 @@ async function probeCast(): Promise<void> {
 
         <div v-if="settings.dshBridge.charMappings.length" class="dsh-map-list">
           <div v-for="(row, index) in settings.dshBridge.charMappings" :key="index" class="dsh-map-row">
-            <input
-              class="bbi-input"
-              type="text"
-              v-model="row.name"
-              placeholder="占位里的名字"
-              spellcheck="false"
-              :aria-label="`第 ${index + 1} 行的名字`"
-            />
+            <div class="dsh-map-name">
+              <input
+                class="bbi-input"
+                type="text"
+                v-model="row.name"
+                placeholder="占位里的名字"
+                spellcheck="false"
+                :aria-label="`第 ${index + 1} 行的名字`"
+              />
+              <span
+                v-if="row.auto"
+                class="dsh-map-auto"
+                title="DSH 自动认角色建的映射；下次同名直接查表。删掉它就会重新进入自动识别。"
+              >
+                自动
+              </span>
+            </div>
             <BbiSelect
               :model-value="row.ref ? dshMappingValue(row) : ''"
               :options="mappingOptions"
@@ -484,6 +493,20 @@ async function probeCast(): Promise<void> {
           <input v-model="settings.dshBridge.autoCast" type="checkbox" class="bbi-checkbox" />
           <span>开：没映射的人也交给 DSH 认（推荐）</span>
         </label>
+        <label class="dsh-auto-row">
+          <input
+            v-model="settings.dshBridge.autoMap"
+            type="checkbox"
+            class="bbi-checkbox"
+            :disabled="!settings.dshBridge.autoCast"
+          />
+          <span>认出来的动漫角色自动建档：把「名字 → 查表英文名」写进上面的档案映射</span>
+        </label>
+        <p class="bbi-field-hint">
+          建档之后，下一单开头就把它们当 <code>characters</code> 发过去，DSH 走的是<b>正常的机械查表</b>
+            （精确命中表里那一条），不再为同一个名字跑一趟识别模型，也不会这次认成 A、下次认成 B。
+          只建动漫映射；你手挑的行不会被覆盖。自动建的行在映射列表里标「自动」，随时可以删。
+        </p>
 
         <div class="bbi-field">
           <div class="bbi-field-head">
@@ -513,7 +536,11 @@ async function probeCast(): Promise<void> {
               线 {{ castResult.line }} · 档位 {{ castResult.mode }} · 来源 {{ castResult.source }}
               · {{ castResult.catalog ? '这条线查动漫表' : '这条线只认档案' }}
             </p>
-            <p v-if="castResult.characters.length" class="bbi-field-hint">
+            <p v-if="castResult.picks.length" class="bbi-field-hint">
+              认出来的人：
+              <b>{{ castResult.picks.map(item => `${item.label} → ${item.ref}`).join('、') }}</b>
+            </p>
+            <p v-else-if="castResult.characters.length" class="bbi-field-hint">
               认出来的人：<b>{{ castResult.characters.join('、') }}</b>
             </p>
             <p v-else class="bbi-field-hint">
@@ -602,6 +629,27 @@ async function probeCast(): Promise<void> {
 .dsh-map-row > * {
   min-width: 0;
 }
+/* 名字格 + 「自动」角标：角标是 DSH 自动建档留下的痕迹（用户手挑的行不会有它）。 */
+.dsh-map-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.dsh-map-name .bbi-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.dsh-map-auto {
+  flex: none;
+  font-size: 10.5px;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border-radius: 6px;
+  color: var(--dsw-alias-label-secondary);
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-l2);
+}
 .dsh-map-del {
   padding: 0;
   height: 30px;
@@ -646,3 +694,4 @@ async function probeCast(): Promise<void> {
   color: var(--bbi-label-secondary, rgba(127, 127, 127, 0.95));
 }
 </style>
+

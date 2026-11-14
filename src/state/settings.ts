@@ -169,6 +169,17 @@ export interface DshBridgeSettings extends DshBridgeConn {
    * 字面出现的名字**，不会凭空加人。
    */
   autoCast: boolean;
+  /**
+   * 自动建档（桥接 2.15.0）：DSH 自动认出来的**动漫角色**，把「正文里的名字 → 查表英文名」
+   * 自动写进 `charMappings`（标 `auto: true`），下一单直接当 `characters` 发过去。
+   *
+   * 为什么值得默认开：自动认角色每次都要让 DSH 跑一趟识别模型（两三秒），而结果本身是稳定的 ——
+   * 没有这张映射，下一个人还是「胡桃」时又得再认一遍，认成别的条目就可能换一张脸。存下来之后
+   * 走的是 DSH 侧正常的机械查表（`lookupCatalog` 精确命中），零模型调用。
+   *
+   * 只建动漫映射，不建档案映射（档案下一单也能按名字认到）；用户手挑的行不会被覆盖。
+   */
+  autoMap: boolean;
 }
 
 /**
@@ -1614,6 +1625,10 @@ function dshBridgeDefaults(): DshBridgeSettings {
     // 与 DSH 侧 bridge.autoCast 的默认值(smart)一致 —— 两边默认就得是同一个答案,
     // 否则「升级完却什么都没变」与「升级完突然冒出两个人」都会发生。
     autoCast: true,
+    // 认出来的动漫角色自动建映射(桥接 2.15.0):`胡桃 → hu tao (genshin impact)` 存进
+    // charMappings(marked auto),下一单直接点名,DSH 走机械查表 —— 不再跑识别模型。
+    // 默认开:这个开关本身就是「让下次对得上」的答案;不想让设置被自动写就关掉。
+    autoMap: true,
   };
 }
 
@@ -1986,6 +2001,7 @@ function normalizeDshBridge(raw: unknown, def: DshBridgeSettings): DshBridgeSett
     charMappings: normalizeDshCharMappings(o.charMappings),
     // 只有明确存成 false 才是关:老配置没有这个键(= undefined),进来就是开。
     autoCast: o.autoCast !== false,
+    autoMap: o.autoMap !== false,
   };
 }
 

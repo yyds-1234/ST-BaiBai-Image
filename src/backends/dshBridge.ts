@@ -146,6 +146,13 @@ export interface DshImageResult extends ComfyImageResult {
    * 但 `copy_prompt` 是真的原样注入进去了 —— 分开报才知道「这张图里的动漫角色是谁」。
    */
   catalogCharacters: string[];
+  /**
+   * DSH 这次实际用的配置集 id（`result.line`，2.15.0 起随回包折出来）。
+   *
+   * 自动建档要把映射绑到**真正生效的那条线**上：目录里可能配了默认集，调用方也可能没传
+   * `configSet` —— 拿请求参数去绑会绑错线（动漫映射线不符时下一单会被静默跳过）。
+   */
+  line: string;
 }
 
 /** DSH 自动认角色的结果形状（协议 §4 的 `result.autoCast`）。 */
@@ -154,8 +161,27 @@ export interface DshAutoCast {
   source: string;
   /** `显示名：引用`（档案 id 或动漫表角色名），与 `characters` 同形。 */
   characters: string[];
+  /**
+   * 结构化的一份（协议 §4，桥接 2.15.0）：`label` 是正文里那个名字，`ref` 是查表用的英文名
+   * （`kind: 'catalog'`）或档案 id（`kind: 'archive'`）。
+   *
+   * 客户端拿这一对**自动建档**，下一单直接当 `characters` 发回来 —— 走的正是正常的机械查表，
+   * 不必再跑识别模型。老插件（2.14.0）没有这个字段 → 空数组，调用方据此跳过自动建档。
+   */
+  picks: DshAutoCastPick[];
   /** 每一步的说明：谁、认成哪一条、哪条因为歧义被跳过。 */
   notes: string[];
+}
+
+/** 一条结构化的认人结果（`result.autoCast.picks[]`）。 */
+export interface DshAutoCastPick {
+  /** 正文里的名字（写手看到的那个，可能是中文）。 */
+  label: string;
+  /** 查表用的英文名（`hu tao (genshin impact)`）或档案 id（`26-小静`）。 */
+  ref: string;
+  kind: 'archive' | 'catalog';
+  /** 这一条是机械层认到的，还是模型提议后核对通过的。 */
+  source: string;
 }
 
 /** `POST /cast/detect` 的结果（协议 §4.6）：只认人，不出图、不写串。 */
@@ -167,6 +193,8 @@ export interface DshCastDetectResult {
   /** `none` / `mechanical` / `smart`。 */
   source: string;
   characters: string[];
+  /** 结构化版本（2.15.0），与 `autoCast.picks` 同形。 */
+  picks: DshAutoCastPick[];
   notes: string[];
   /** 这条线有没有动漫表：false = 只可能认档案（面板据此换提示文案）。 */
   catalog: boolean;
@@ -542,6 +570,7 @@ export async function detectDshCast(
     characters: Array.isArray(body.characters)
       ? body.characters.filter((x): x is string => typeof x === 'string' && !!x.trim())
       : [],
+    picks: autoCastPicksOf(body.picks),
     notes: Array.isArray(body.notes)
       ? body.notes.filter((x): x is string => typeof x === 'string' && !!x.trim())
       : [],
@@ -749,12 +778,31 @@ function toImageResult(result: Record<string, unknown> | undefined, jobId: strin
     requestId: typeof result?.requestId === 'string' ? result.requestId : '',
     width: typeof first?.width === 'number' ? first.width : 0,
     height: typeof first?.height === 'number' ? first.height : 0,
-    // 自动认角色 + 动漫表命中的账（2.14.0）。老插件没有这两块 → 空，调用方据空/非空决定要不要提示。
+    // 自动认角色 + 动漫表命中的账（2.14.0；picks 与 line 是 2.15.0）。老插件没有这些块 → 空，
+    // 调用方据空/非空决定要不要提示、要不要自动建档。
     ...autoCastOf(result?.autoCast) === undefined ? {} : { autoCast: autoCastOf(result?.autoCast)! },
     catalogCharacters: Array.isArray(result?.catalogCharacters)
       ? result.catalogCharacters.filter((x): x is string => typeof x === 'string' && !!x.trim())
       : [],
+    // 实际生效的配置集：自动建档要按它绑线，不能拿请求参数猜（没传 configSet 时尤其会错）。
+    line: typeof result?.line === 'string' ? result.line : '',
   };
+}
+
+/** 归一 `result.autoCast.picks` / `/cast/detect` 的 `picks`：形状不对的项直接丢。 */
+function autoCastPicksOf(raw: unknown): DshAutoCastPick[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DshAutoCastPick[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const o = item as Record<string, unknown>;
+    const label = typeof o.label === 'string' ? o.label.trim() : '';
+    const ref = typeof o.ref === 'string' ? o.ref.trim() : '';
+    const kind = o.kind === 'archive' ? 'archive' : o.kind === 'catalog' ? 'catalog' : '';
+    if (!label || !ref || !kind) continue;
+    out.push({ label, ref, kind, source: typeof o.source === 'string' ? o.source : '' });
+  }
+  return out;
 }
 
 /** 归一 `result.autoCast`：形状不对就当没有（一份坏账不该让整张图的回包失败）。 */
@@ -768,6 +816,7 @@ function autoCastOf(raw: unknown): DshAutoCast | undefined {
   return {
     source: typeof item.source === 'string' ? item.source : '',
     characters,
+    picks: autoCastPicksOf(item.picks),
     notes: Array.isArray(item.notes)
       ? item.notes.filter((x): x is string => typeof x === 'string' && !!x.trim())
       : [],

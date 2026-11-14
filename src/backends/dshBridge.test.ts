@@ -367,9 +367,36 @@ describe('autoCast（自动认角色，协议 §3.1 / 2.14.0）', () => {
     expect(result.autoCast).toEqual({
       source: 'smart',
       characters: ['胡桃：hu tao (genshin impact)'],
+      picks: [],
       notes: ['自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)'],
     });
     expect(result.catalogCharacters).toEqual(['胡桃：hu tao (genshin impact)']);
+  });
+
+  it('picks（2.15.0）折出「中文名 + 查表英文名」，形状坏的项丢掉；line 用 DSH 实际生效的那条', async () => {
+    respondWith(accepted(), jsonResponse(200, doneResult({
+      line: 'moss-anime',
+      autoCast: {
+        source: 'smart',
+        characters: ['胡桃：hu tao (genshin impact)'],
+        picks: [
+          { label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog', source: 'smart' },
+          { label: '小静', ref: '26-小静', kind: 'archive', source: 'mechanical' },
+          // 缺 kind / 缺 ref 的坏项：客户端拿去建档会建出一条指向空串的映射。
+          { label: '无主', ref: '', kind: 'catalog' },
+          { label: '无类别', ref: 'someone', kind: 'nonsense' },
+          'junk',
+        ],
+        notes: [],
+      },
+    })));
+    const result = await generateDshImage(conn(), VALUES);
+    expect(result.autoCast?.picks).toEqual([
+      { label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog', source: 'smart' },
+      { label: '小静', ref: '26-小静', kind: 'archive', source: 'mechanical' },
+    ]);
+    // 自动建档必须绑到真正生效的线：请求里的 configSet 可能只是空串（跟随 DSH 默认集）。
+    expect(result.line).toBe('moss-anime');
   });
 
   it('autoCast 形状坏了当没有（一份坏账不该让整张图失败）', async () => {
@@ -391,6 +418,11 @@ describe('detectDshCast（试跑自动认角色，POST /cast/detect）', () => {
       mode: 'smart',
       source: 'smart',
       characters: ['胡桃：hu tao (genshin impact)'],
+      picks: [
+        { label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog', source: 'smart' },
+        // 缺 kind 的坏项要被丢掉：面板不能显示一条「胡桃 → 空」的映射。
+        { label: '坏项', ref: 'x', kind: 'nonsense' },
+      ],
       notes: ['自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)'],
       catalog: true,
     }));
@@ -413,6 +445,7 @@ describe('detectDshCast（试跑自动认角色，POST /cast/detect）', () => {
       mode: 'smart',
       source: 'smart',
       characters: ['胡桃：hu tao (genshin impact)'],
+      picks: [{ label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog', source: 'smart' }],
       notes: ['自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)'],
       catalog: true,
     });
