@@ -17,7 +17,7 @@ import {
   vibeFingerprint,
   vibeMetaFromData,
 } from '@/backends/vibeStore';
-import type { DshBridgeConn } from '@/backends/dshBridge';
+import { DSH_DEFAULT_CONFIG_SET, type DshBridgeConn } from '@/backends/dshBridge';
 import { getContext } from '@/st/context';
 import { reactive, watch } from 'vue';
 
@@ -141,7 +141,7 @@ export interface ComfyUISettings extends BackendConn {
  * 完全同源,故直接取别名,不抄第二份。
  *
  * 【为什么不设「角色名来源」开关】曾经有过 charactersFrom: 'prompt' | 'manual'，
- * 但两条路都走不通：占位模式的世界书只许写中文散文、不许 <characters> 子标签，
+ * 但两条路都走不通：占位模式的世界书要求名字写在「人物名称：」那一行里、不许 <characters> 子标签，
  * 故 'prompt' 恒拿到空名单；'manual' 面板上又没有手填输入框，等于一个只能存不能用的值。
  * 而 DSH 侧本来就按 scene 串里出现的名字在自己档案里认人（identities/*.md + line 门禁），
  * 再开一个手填名单只会允许「填的与正文写的不是同一批人」，那种不一致在 DSH 那边
@@ -1574,8 +1574,10 @@ const DSH_BRIDGE_DEFAULT_TIMEOUT_MS = 180000;
 /**
  * DSH 写手默认值。
  *
- * configSet 默认空串 = 用 DSH 侧的默认配置集:那一侧才知道用户装了哪几套,
- * 这里预填一个 id 只会在用户改名/删集之后变成一个不存在的引用。
+ * configSet 默认空串 = 「跟随本插件的默认线」,由 effectiveDshBridge 填成
+ * DSH_DEFAULT_CONFIG_SET(moss 真人线 moss-real)。为什么不在默认值里直接写 id:
+ * 面板上那一格要能显示「用户没指定」,而空串正是它;真正发出去的值统一在
+ * effectiveDshBridge 收口,请求历史与探活看到的是同一个。
  */
 function dshBridgeDefaults(): DshBridgeSettings {
   return {
@@ -1818,7 +1820,9 @@ export function effectiveDshBridge(): DshBridgeConn {
     url: d.url,
     token: d.token,
     timeoutMs: d.timeoutMs,
-    configSet: d.configSet,
+    // 空串 = 跟随本插件的默认线(moss 真人线),见 DSH_DEFAULT_CONFIG_SET。
+    // 收口在这里而不是 default 里:老用户的存量配置里那一格是空的,改默认值只影响新装。
+    configSet: d.configSet.trim() || DSH_DEFAULT_CONFIG_SET,
     count: d.count,
   };
 }

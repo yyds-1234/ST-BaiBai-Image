@@ -36,7 +36,7 @@ import {
 import { isTagPlanning } from '@/floor/tagPlanState';
 import { formatGenerationMeta } from '@/generationMeta';
 import { channelLabel } from '@/pages/backend/channelSwitch';
-import { activeComfyPreset, activeOrientationLock, imageDisplayMaxHeight, settings } from '@/state/settings';
+import { activeComfyPreset, activeOrientationLock, effectiveDshBridge, imageDisplayMaxHeight, settings } from '@/state/settings';
 import { chineseAppearanceForText, rolesForText, rolesWithoutAppearance } from '@/state/charTags';
 import { beginImage, failImage, finishImage, patchImagePrompt, safeHistory } from '@/state/history';
 import { copyText } from '@/st/clipboard';
@@ -318,8 +318,9 @@ async function generate(): Promise<void> {
     // 走 DSH 的 roles 旁路:它收到块就直接拼进正向,不查自己的 identities 档案、
     // 不过 line 门禁。所以两边的角色库不必同名、不必同步——角色只归柏宝绘管。
     //
-    // 为什么用 props.dsh 匹配而不是 props.characters:占位模式的世界书只许写中文散文、
-    // 不许 <characters> 子标签,故 props.characters 恒空;也不该用 props.prompt(占位没有 tag)。
+    // 为什么用 props.dsh 匹配而不是 props.characters:占位模式的世界书要求模型把名字写在
+    // 「人物名称：」那一行(见 autoTag/dshPlaceholder 的 v2.1 协议),故 props.characters 恒空;
+    // 也不该用 props.prompt(占位没有 tag)。名字在这一行里出现得最可靠,认人就靠它。
     dshRoles: dshActive.value ? rolesForText(props.dsh) : [],
     // 占位里叫得出名字、但角色库里没给他写外貌的那些人。DSH 会照常出图（零个角色），
     // 图里这个人就成了没有设定的路人 —— 这件事自己不发声，故必须在这里捞出来告诉用户。
@@ -371,7 +372,7 @@ async function generate(): Promise<void> {
         model: naiActive.value
           ? settings.nai.model
           : dshActive.value
-            ? settings.dshBridge.configSet.trim() || 'DSH 默认配置集'
+            ? effectiveDshBridge().configSet
             : activeComfyPreset().name,
         prompt: job.prompt,
         nl: job.nl,

@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
+import worldbook from '../../docs/worldbook/01-柏宝绘-DSH画面占位.json';
 import {
   buildDshPlaceholder,
   describeDshPlaceholder,
+  DSH_PART_LABELS,
   DSH_WORLDBOOK_ENTRY,
+  dshPartsOf,
+  dshSceneForBridge,
   dshSceneOf,
   isDshPlaceholder,
 } from '@/autoTag/dshPlaceholder';
@@ -64,10 +68,16 @@ describe('parseImageTagContent: <dsh>', () => {
     expect(isDshPlaceholder(parseImageTagContent('<bbi_image>1girl</bbi_image>'))).toBe(false);
   });
 
-  it('跨行写进 <dsh> 的内容被折成单行（提示词里换行没有意义）', () => {
-    expect(parseImageTagContent('<bbi_image><dsh>第一句\n第二句</dsh></bbi_image>').dsh).toBe(
-      '第一句 第二句',
+  it('跨行写进 <dsh> 的内容保留行结构（v2.1 的三行是格式的一部分）', () => {
+    // v1.0 时这里折叠成单行（「提示词里换行没有意义」）；v2.1 起 dsh 固定三行
+    // （人物名称 / 人物服装 / 场景描述），行就是信息本身，折叠会把三段糊成一句。
+    expect(parseImageTagContent('<bbi_image><dsh>人物名称：林夏\n人物服装：长风衣\n场景描述：天台回头</dsh></bbi_image>').dsh).toBe(
+      '人物名称：林夏\n人物服装：长风衣\n场景描述：天台回头',
     );
+    // 行首行尾的空白与空行仍然被清掉：模型常把缩进和空行带进来
+    expect(parseImageTagContent('<bbi_image><dsh>\n  第一句  \n\n 第二句\n</dsh></bbi_image>').dsh).toBe('第一句\n第二句');
+    // CRLF 归一成 LF：Windows 侧手写的占位不能把 \r 带进成品串
+    expect(parseImageTagContent('<bbi_image><dsh>第一句\r\n第二句</dsh></bbi_image>').dsh).toBe('第一句\n第二句');
   });
 });
 
@@ -91,8 +101,21 @@ describe('serializeImageTag: <dsh>', () => {
     ).toBe('<bbi_image>1girl<size>portrait</size></bbi_image>');
   });
 
-  it('buildDshPlaceholder 产出的串能原样解析回来（读写只有一份口径）', () => {
-    const raw = buildDshPlaceholder('深夜的书房，她趴在桌上睡着了，台灯从左侧打过来', 'landscape');
+  it('三行 dsh 序列化再解析回来一字不差（换行是内容，不能被折掉）', () => {
+    const three = '人物名称：林夏\n人物服装：米色长风衣\n场景描述：傍晚的天台，她侧身回头';
+    const raw = serializeImageTag({
+      tag: '',
+      dsh: three,
+      nl: '',
+      negative: '',
+      characters: [],
+      size: 'portrait',
+    });
+    expect(raw).toContain(`<dsh>${three}</dsh>`);
+    expect(parseImageTagContent(raw).dsh).toBe(three);
+  });
+
+  it('buildDshPlaceholder 产出的串能原样解析回来（读写只有一份口径）', () => {    const raw = buildDshPlaceholder('深夜的书房，她趴在桌上睡着了，台灯从左侧打过来', 'landscape');
     expect(raw).toBe(
       '<bbi_image><dsh>深夜的书房，她趴在桌上睡着了，台灯从左侧打过来</dsh><size>landscape</size></bbi_image>',
     );
@@ -105,6 +128,73 @@ describe('serializeImageTag: <dsh>', () => {
       dsh: '深夜的书房，她趴在桌上睡着了，台灯从左侧打过来',
     });
     expect(serializeImageTag(parseImageTagContent(raw))).toBe(raw);
+  });
+});
+
+describe('三行占位（v2.1）：人物名称 / 人物服装 / 场景描述', () => {
+  const THREE = '人物名称：林夏、店主\n人物服装：林夏：米色长风衣、黑伞；店主：白围裙\n场景描述：深夜的便利店门口，她侧身回头，冷白灯从右侧打来，中景';
+
+  it('三行齐全时拆出三段，并按协议顺序认标签（不靠行号）', () => {
+    expect(dshPartsOf(THREE)).toEqual({
+      names: '林夏、店主',
+      outfit: '林夏：米色长风衣、黑伞；店主：白围裙',
+      scene: '深夜的便利店门口，她侧身回头，冷白灯从右侧打来，中景',
+      complete: true,
+    });
+  });
+
+  it('行被折成一行、半角冒号、标签后多个空格都能认', () => {
+    const folded = '人物名称: 林夏 人物服装: 米色长风衣 场景描述: 雨后的便利店门口，她侧身回头';
+    expect(dshPartsOf(folded)).toMatchObject({ names: '林夏', outfit: '米色长风衣', complete: true });
+  });
+
+  it('顺序写歪了也按标签归位：靠标签切，不靠第几行', () => {
+    const swapped = '场景描述：她在窗边回头 人物名称：林夏 人物服装：校服';
+    expect(dshPartsOf(swapped)).toMatchObject({
+      names: '林夏',
+      outfit: '校服',
+      scene: '她在窗边回头',
+      complete: true,
+    });
+  });
+
+  it('同一标签重复出现取第一次（场景描述里顺手写的「人物服装：…」不能覆盖前面的真信息）', () => {
+    const dup = '人物名称：林夏\n人物服装：米色长风衣\n场景描述：她抬手拢头发，人物服装：湿透的裙摆';
+    expect(dshPartsOf(dup).outfit).toBe('米色长风衣');
+    expect(dshPartsOf(dup).scene).toContain('湿透的裙摆');
+  });
+
+  it('缺一行 → complete=false，但已有的段仍然读得到（不是错误，只是回落原样发）', () => {
+    const partial = dshPartsOf('人物名称：林夏\n场景描述：她在窗边回头');
+    expect(partial).toMatchObject({ names: '林夏', outfit: '', complete: false });
+  });
+
+  it('旧的一段散文占位读不出标签：complete=false，整段原样返回', () => {
+    const legacy = '傍晚的天台，林夏靠着栏杆回头，逆光把发梢照透';
+    expect(dshPartsOf(legacy)).toEqual({ names: '', outfit: '', scene: '', complete: false });
+    expect(dshSceneForBridge(legacy)).toBe(legacy);
+  });
+
+  it('三行齐全时拉直成协议顺序与全角标签（DSH 侧拿到的永远是同一种形状）', () => {
+    const messy = '场景描述: 她在窗边回头\n人物名称: 林夏\n人物服装: 校服';
+    expect(dshSceneForBridge(messy)).toBe('人物名称：林夏\n人物服装：校服\n场景描述：她在窗边回头');
+    // 空串 → 空串（调用方据此回落到 prompt，不要把空串当占位）
+    expect(dshSceneForBridge('   ')).toBe('');
+  });
+
+  it('三行者一起进桥接的 scene 字段：一段都不丢', () => {
+    const scene = dshSceneForBridge(THREE);
+    for (const label of DSH_PART_LABELS) expect(scene).toContain(`${label}：`);
+    expect(scene.split('\n')).toHaveLength(3);
+  });
+
+  it('卡片副标题把名字带出来（缺人名最难在卡片上发现）', () => {
+    expect(describeDshPlaceholder(THREE)).toBe(`DSH 写手 · 林夏、店主 · ${THREE.length} 字画面描述`);
+    // 空镜不占副标题
+    const empty = '人物名称：无\n人物服装：未着衣物\n场景描述：雨后的空巷，积水反光，中景';
+    expect(describeDshPlaceholder(empty)).toBe(`DSH 写手 · ${empty.length} 字画面描述`);
+    // 旧散文占位保持原口径
+    expect(describeDshPlaceholder('她在窗边回头')).toBe('DSH 写手 · 6 字画面描述');
   });
 });
 
@@ -168,14 +258,20 @@ describe('子标签字面量必须被挡下', () => {
 });
 
 describe('DSH_WORLDBOOK_ENTRY', () => {
-  it('是一段可直接粘贴的成品文本：含格式、四要素、长度与禁用清单', () => {
+  it('是一段可直接粘贴的成品文本：含格式、三行、长度与禁用清单', () => {
     expect(DSH_WORLDBOOK_ENTRY).toContain('<bbi_image><dsh>');
     expect(DSH_WORLDBOOK_ENTRY).toContain('<size>portrait</size>');
-    // 四要素缺一件,画出来就是通用插图——这四个词是条目的承重墙
-    for (const element of ['谁在画面里', '在哪', '在做什么', '光从哪来']) {
+    // 三行是 v2.1 的承重墙：名字 / 衣服 / 场景必须各占一行、各带标签
+    for (const label of DSH_PART_LABELS) expect(DSH_WORLDBOOK_ENTRY).toContain(`${label}：`);
+    // 场景描述只要求「在哪、在做什么」，光/景别/机位是可选项 —— 世界书是弱约束，
+    // 条目越细模型越会挑着执行，所以别再往这里加四要素清单。
+    for (const element of ['在哪', '在做什么', '光从哪来']) {
       expect(DSH_WORLDBOOK_ENTRY).toContain(element);
     }
-    expect(DSH_WORLDBOOK_ENTRY).toContain('60 到 150 字');
+    expect(DSH_WORLDBOOK_ENTRY).toContain('一句话就够');
+    expect(DSH_WORLDBOOK_ENTRY).toContain('40 到 120 字');
+    // 条目长度也是一条契约：世界书每轮都进提示词，长到两千字以上模型就开始漏项。
+    expect(DSH_WORLDBOOK_ENTRY.length).toBeLessThan(1600);
     // 别把画风词/采样参数教给模型:那两项由 DSH 侧的配置集负责
     expect(DSH_WORLDBOOK_ENTRY).toContain('画风词');
     expect(DSH_WORLDBOOK_ENTRY).toContain('采样参数');
@@ -189,11 +285,20 @@ describe('DSH_WORLDBOOK_ENTRY', () => {
     expect(DSH_WORLDBOOK_ENTRY.slice(closing)).toMatch(/她推门进去/);
   });
 
+  it('与可导入的世界书 JSON 逐字相同（面板复制的那份 = 用户导入的那份）', () => {
+    // 这条比对只能放在测试里：docs/ 不进构建产物，运行时代码读不到它。
+    // 唯一目的是让「改了一边忘了另一边」当场变成红的 —— 两份漂移的症状是
+    // 老用户导入的书要求 A 写法、新复制的条目要求 B 写法，而两边都不会报错。
+    expect(worldbook.entries['1'].content).toBe(DSH_WORLDBOOK_ENTRY);
+    // 卡内精简版也必须带三行标签，否则「书很挤」的那种卡会继续写旧格式
+    for (const label of DSH_PART_LABELS) expect(worldbook.entries['4'].content).toContain(`${label}：`);
+  });
+
   it('世界书正文是原样拼进提示词的,不能带 markdown 装饰', () => {
     expect(DSH_WORLDBOOK_ENTRY).not.toMatch(/\*\*|\u0060\u0060\u0060|#{1,6} /m);
   });
 
-  it('里面的每一条占位样例都能被本仓库的解析口径读回来', () => {
+  it('里面的每一条占位样例都能被本仓库的解析口径读回来（且三行齐全）', () => {
     const samples = DSH_WORLDBOOK_ENTRY.match(/<bbi_image>[\s\S]+?<\/bbi_image>/gi) ?? [];
     expect(samples.length).toBeGreaterThan(0);
     for (const sample of samples) {
@@ -202,6 +307,8 @@ describe('DSH_WORLDBOOK_ENTRY', () => {
       expect(['portrait', 'landscape']).toContain(content.size);
       // <dsh> 里再出现子标签会让非贪婪的查找正则提前截断,正文漏进 DOM
       expect(containsTagMarkup(content.dsh ?? '')).toBe(false);
+      // 示例必须演示三行格式：模型学的是例子，不是上面那段散文说明
+      expect(dshPartsOf(content.dsh ?? '').complete).toBe(true);
     }
   });
 });

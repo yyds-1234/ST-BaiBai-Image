@@ -8,7 +8,7 @@ import BbiTextarea from '@/components/BbiTextarea.vue';
 import Icon from '@/components/Icon.vue';
 import ModalMask from '@/components/ModalMask.vue';
 import { activeOrientationLock } from '@/state/settings';
-import { containsTagMarkup, type ImageTagContent } from '@/st/imageTagRegex';
+import { containsTagMarkup, normalizeDshText, type ImageTagContent } from '@/st/imageTagRegex';
 
 /**
  * 手动编辑生图提示词的弹窗(楼层卡片 ⋯ 菜单里的铅笔钮)。
@@ -74,9 +74,10 @@ const open = ref(false);
 
 const tag = ref(props.content.tag);
 /**
- * DSH 占位的画面散文。它**不可在这里编辑**,但必须原样带回:
- * 弹窗只编辑五个结构化字段,没给编辑的字段静默丢掉就等于「打开看一眼再保存,
- * 这条占位被抹成空 tag」——而 promptHash 吃原文,老图会集体变成「旧提示词」。
+ * DSH 占位的画面描述(固定三行:人物名称 / 人物服装 / 场景描述)。它**不可在这里编辑**,
+ * 但必须原样带回:弹窗只编辑五个结构化字段,没给编辑的字段静默丢掉就等于「打开看一眼
+ * 再保存,这条占位被抹成空 tag」——而 promptHash 吃原文,老图会集体变成「旧提示词」。
+ * 三行也原样保留(dshText 只清空白,不折行)。
  */
 const dsh = ref(props.content.dsh ?? '');
 const nl = ref(props.content.nl);
@@ -118,10 +119,20 @@ function oneLine(text: string): string {
   return text.trim().replace(/[\r\n]+/g, ' ');
 }
 
+/**
+ * dsh 的归一与别的字段**不同**:它固定三行(人物名称 / 人物服装 / 场景描述),
+ * 行就是信息本身。直接套 oneLine 会在「打开弹窗看一眼再保存」时把三行折成一行 ——
+ * 原文变了 → promptHash 变了 → 老图集体变成「旧提示词」，而且打开即 dirty。
+ * 所以这里与 parseImageTagContent 共用 normalizeDshText。
+ */
+function dshText(text: string): string {
+  return normalizeDshText(text);
+}
+
 /** 草稿归一后的结果 —— 保存与「有没有改」都以它为准,两处不能各算一次。 */
 const draft = computed<ImageTagContent>(() => ({
   tag: oneLine(tag.value),
-  dsh: oneLine(dsh.value),
+  dsh: dshText(dsh.value),
   nl: oneLine(nl.value),
   negative: oneLine(negative.value),
   characters: characters.value

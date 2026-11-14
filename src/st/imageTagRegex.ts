@@ -178,11 +178,28 @@ export function containsTagMarkup(text: string): boolean {
   return FORBIDDEN_SUBTAG.test(text);
 }
 
+/**
+ * `<dsh>` 正文的归一：CRLF → LF、逐行去首尾空白、丢掉空行，**保留行结构**。
+ *
+ * 与 tag/nl/negative 的「折成单行」刻意不同（v2.1 起 dsh 固定三行：人物名称 /
+ * 人物服装 / 场景描述）。这是格式的**读写唯一口径**：解析（parseImageTagContent）
+ * 与编辑弹窗（PromptEditor 的 draft）都调它，否则「打开弹窗看一眼再保存」会把三行
+ * 折成一行，连 dirty 判定都会假报「改过了」。
+ */
+export function normalizeDshText(text: string): string {
+  return String(text ?? '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
 export interface ImageTagContent {
   /** danbooru 短 tag 部分：显式 <tag> 子标签内容，或剔除子标签后的裸文本（存量格式）。 */
   tag: string;
   /**
-   * DSH 写手占位：<dsh> 子标签里的中文散文（人物 / 场景 / 动作 / 光线）。
+   * DSH 写手占位：<dsh> 子标签里的三行中文（人物名称 / 人物服装 / 场景描述）。
    *
    * 它不是提示词，而是「这一张交给 DSH 去写串」的委派书——DSH 侧用配置集规范把它
    * 写成成品画面串。故它与 tag/nl 互斥：写了 dsh 的 tag 走 DSH 渠道，
@@ -214,9 +231,10 @@ export function parseImageTagContent(raw: string): ImageTagContent {
   // 内容统一折叠成单行:手写 tag 可能跨行,而提示词里换行没有意义
   const oneLine = (text: string) => text.trim().replace(/[\r\n]+/g, ' ');
   const inner = raw.replace(/^<bbi_image[^>]*>/i, '').replace(/<\/bbi_image>$/i, '');
-  // <dsh> 与 <nl> 同批先剥:它的正文是中文散文,漏进 tag 就会被当成 danbooru 词发出去
+  // <dsh> 与 <nl> 同批先剥:它的正文是中文,漏进 tag 就会被当成 danbooru 词发出去
+  // dsh 走 normalizeDshText 而不是 oneLine:三行是 v2.1 的格式本身,折叠会把信息糊在一起
   const dshMatch = inner.match(/<dsh>([\s\S]*?)<\/dsh>/i);
-  const dsh = dshMatch ? oneLine(dshMatch[1]) : '';
+  const dsh = dshMatch ? normalizeDshText(dshMatch[1]) : '';
   const nlMatch = inner.match(/<nl>([\s\S]*?)<\/nl>/i);
   const nl = nlMatch ? oneLine(nlMatch[1]) : '';
   const negativeMatch = inner.match(/<negative>([\s\S]*?)<\/negative>/i);

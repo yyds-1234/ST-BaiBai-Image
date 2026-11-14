@@ -8,7 +8,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * 1. 老配置 hydrate 后 defaultBackend **不会**变成 dshbridge —— 用户没选过它;
  * 2. defaultBackend 白名单认得 'dshbridge' —— 漏了的话用户选了它、刷新即被静默重置
  *    (这条最容易漏,且现象是「我明明选了它」,没有任何报错可查);
- * 3. configSet 的空串是**有意义的存储值**(= 用 DSH 默认集),不能被 || 吞成默认值。
+ * 3. configSet 的空串是**有意义的存储值**（= 跟随本插件默认线，不写死进存档），
+ *    不能被 || 吞成默认值；真正发出去的值由 effectiveDshBridge 收口成 moss-real。
  *
  * 走 window.SillyTavern.getContext 而不是 vi.mock('@/st/context'):那正是扩展在
  * 生产环境里接触宿主的唯一入口(st/context.ts),stub 它等于让这条测试跑在真实路径上。
@@ -110,9 +111,23 @@ describe('dshBridge 逐字段兜底', () => {
     });
   });
 
-  it('空 configSet 保持空串（= 用 DSH 默认集），不被默认值顶掉', async () => {
+  it('空 configSet 保持空串（= 跟随默认线），不被默认值顶掉', async () => {
     const settings = await hydrateWith({ dshBridge: { configSet: '' } });
     expect(settings.dshBridge.configSet).toBe('');
+  });
+
+  it('发请求时收口成 moss 真人线：留空不再是「DSH 的默认集」', async () => {
+    // 存储值留空（面板上显示「没指定」），但真正进 payload 的必须是 moss-real ——
+    // 否则柏宝绘出什么风格取决于另一台机器上可以随时改掉的 settings.yaml。
+    await hydrateWith({ dshBridge: { configSet: '' } });
+    const mod = await import('@/state/settings');
+    expect(mod.effectiveDshBridge().configSet).toBe('moss-real');
+    // 用户点了别的线就照发，不被默认值覆盖
+    mod.settings.dshBridge.configSet = 'moss-anime';
+    expect(mod.effectiveDshBridge().configSet).toBe('moss-anime');
+    // 手填带空白的也当同一个值
+    mod.settings.dshBridge.configSet = '  moss-real  ';
+    expect(mod.effectiveDshBridge().configSet).toBe('moss-real');
   });
 
   it('类型不符逐项回落默认值', async () => {

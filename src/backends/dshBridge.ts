@@ -55,6 +55,20 @@ export interface DshHealth {
 /** 本端支持的协议版本。对不上就直接报错,不静默降级 —— 降级会让人以为「能用但慢」。 */
 export const DSH_PROTOCOL_VERSION = 2;
 
+/**
+ * 柏宝绘默认走的 DSH 配置集：moss 真人线（`moss-real`）。
+ *
+ * 【为什么不留空、「用 DSH 侧的默认集」】
+ * 默认集在 DSH 配置台里是可以被改的（本机从 `anime-ob` 改到 `moss-real` 只改了一行
+ * `settings.yaml`），留空就等于「柏宝绘出什么风格取决于另一台机器上某个下拉框」。
+ * 占位是世界书约束出来的三行中文，它喂给哪条线应当是可预期的：点名 moss 真人线，
+ * 与阅读器**随请求发 configSet** 是同一个字段、同一种请求形状（协议 §3.1）。
+ *
+ * 【填错会怎样】DSH 侧按配置集 id 读 `configs/<id>.md`，不存在就返回 400 并说明；
+ * 面板里随时可以换成 `moss-anime` 或别的线，这里只是**默认值**。
+ */
+export const DSH_DEFAULT_CONFIG_SET = 'moss-real';
+
 /** 任务状态(协议 §4)。终态是 done / failed,其余都要继续轮询。 */
 export type DshJobStatus = 'queued' | 'writing' | 'rendering' | 'done' | 'failed';
 

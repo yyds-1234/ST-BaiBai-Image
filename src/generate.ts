@@ -23,6 +23,7 @@
  */
 
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
+import { dshSceneForBridge } from '@/autoTag/dshPlaceholder';
 import { comfySimpleParams, validateSimpleConfig } from '@/backends/comfyTemplates';
 import { generateDshImage } from '@/backends/dshBridge';
 import { generateComfyImage, previewComfyPrompt, randomSeed, type ComfyImageResult } from '@/backends/comfyui';
@@ -326,7 +327,11 @@ export async function generateImage(
       //
       // 场景来源:优先 <dsh> 占位;占位为空时回落 prompt,这样把同一条卡片切到老 tag 上
       // 也能出图(否则「换了后端,卡片点什么都没反应」)。
-      const scene = dshScene || input.prompt.trim();
+      //
+      // dshSceneForBridge:占位若是 v2.1 的三行(人物名称 / 人物服装 / 场景描述),在这里
+      // 拉直成协议顺序与全角标签;旧的一段散文占位原样返回。三种信息一起进 scene ——
+      // 与阅读器送正文走的是同一个桥接字段,DSH 侧看到的请求形状因此完全一致。
+      const scene = dshSceneForBridge(dshScene) || input.prompt.trim();
       if (!scene) throw new Error('这条占位没有画面描述,无法交给 DSH');
       const conn = effectiveDshBridge();
       const output = await generateDshImage(

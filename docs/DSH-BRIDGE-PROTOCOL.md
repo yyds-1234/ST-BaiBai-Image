@@ -60,11 +60,11 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `scene` | string | 是 | **画面占位原文**：中文散文（人物 + 场景 + 动作 + 光线）。上限 `promptMaxChars × 2`。 |
+| `scene` | string | 是 | **画面占位原文**：v2.0 的三行中文（人物名称 / 人物服装 / 场景描述）；旧版一段散文照样收。上限 `promptMaxChars × 2`。 |
 | `roles` | `{name,charBlock}[]` | 否 | **柏宝绘实际走的字段**。角色旁路：DSH 不读 identities/、不查档案、不过 line 门禁、不套用 LoRA / 风格档，`charBlock` 原样拼进正向（第一个站主角位）。`charBlock` **两种写法都合法**：一句连贯英文描述（推荐，贴散文流底模）或一串 danbooru 短 tag；DSH 不判别、不转换。角色由柏宝绘管理，两边角色库无需同名、无需同步。 |
 | `characters` | string[] | 否 | 名字数组，走 DSH 自己的档案：拿名字去 identities/*.md 认人、挂 LoRA、过 line 门禁。curl 手写 / 工具调用用这条；占位模式下柏宝绘不传它。 |
 | `size` | `'portrait'` | `'landscape'` | 否 | 默认 `portrait`。DSH 会按它摆正宽高（对调，像素总数不变）。 |
-| `configSet` | string | 否 | 配置集 id；留空用 DSH 默认集。 |
+| `configSet` | string | 否 | 配置集 id。柏宝绘把空串收口成 **`moss-real`**（moss 真人线）再发，与阅读器发配置集同字段；DSH 侧仍按原语义「留空用默认集」。 |
 | `negative` | string | 否 | 追加负向串；与配置集 `negativeHint` **合并**，不替换。 |
 | `count` | integer | 否 | 1..8，默认 1。柏宝绘只落第一张。 |
 | `seed` | integer | 否 | 复现种子；0/缺省 = 随机。 |
@@ -202,14 +202,28 @@
 ## 7. 占位格式（柏宝绘 → 主模型）
 
 ```
-<bbi_image><dsh>傍晚的走廊，林夏靠在窗边回头看他，逆光把发梢照透</dsh><size>portrait</size></bbi_image>
+<bbi_image><dsh>人物名称：林夏
+人物服装：米色长风衣，右手收着黑伞
+场景描述：傍晚的天台，她侧身回头，逆光把发梢照透
+</dsh><size>portrait</size></bbi_image>
 ```
 
 - 沿用 `<bbi_image>` 外壳 + `<dsh>` 子标签（没有 `<tag>`/`<nl>`，那是 autoTag 线路的写法）。
+- **`<dsh>` 固定三行**（v2.1）：人物名称 / 人物服装 / 场景描述，顺序固定、标签固定。
+  三行缺一不可；旧版「一段中文散文」的占位原样照发，不做强制迁移。
+- **场景描述一句话就够**（在哪 + 在做什么，单帧），光 / 景别 / 机位可选。
+  世界书是弱约束（只是每轮拼进提示词的一段话），条目故意只钉格式、不钉颗粒度；
+  容错放在插件侧：标签顺序写歪、半角冒号、行被折成一行、整段散文，都能收。
+- 三行**一起**进 §3.1 的 `scene` 字段：插件在发请求前按标签把顺序与全角冒号拉直
+  （`dshSceneForBridge`），DSH 侧看到的形状因此与阅读器送正文时完全一致——
+  两边用的都是 `scene`，不是各自一套自定义字段。
+- `configSet` 随请求发 **moss 真人线 `moss-real`**（面板留空时由 `effectiveDshBridge` 收口），
+  与阅读器把配置集随请求发是同一个字段、同一种语义。
 - **占位出现在正文的那个位置，图就落在那个位置**（锚点在 tag 的行内位置，水合按 DOM 顺序配对）。
   世界书要求模型把它插在所描述的那一段之后，而不是全文末尾——压尾写法会让图和情节错位。
 - 占位由柏宝绘的托管正则换成空锚点，**永不进 DOM、永不进提示词**。
-- 世界书条目正文见柏宝绘仓库 `src/autoTag/dshPlaceholder.ts` 的 `DSH_WORLDBOOK_ENTRY`。
+- 世界书条目正文见柏宝绘仓库 `src/autoTag/dshPlaceholder.ts` 的 `DSH_WORLDBOOK_ENTRY`；
+  `docs/worldbook/01-柏宝绘-DSH画面占位.json` 的 uid 1 与它逐字相同（单测锁着）。
 
 ## 8. 写手与请求历史（DSH 侧内部细节，不是协议字段）
 

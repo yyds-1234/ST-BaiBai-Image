@@ -133,7 +133,8 @@ const COUNT_OPTIONS = ['1', '2', '3', '4'].map(v => ({ value: v, label: v + ' �
             aria-label="DSH 配置集"
           />
           <p class="bbi-field-hint">
-            配置集决定成品串的写法与底模。点一次「测试连接」可拉回 DSH 侧已有的清单。
+            配置集决定成品串的写法与底模；<b>留空 = moss 真人线（moss-real）</b>，
+            与阅读器随请求发的是同一个字段。点一次「测试连接」可拉回 DSH 侧已有的清单。
           </p>
         </div>
 
@@ -198,7 +199,13 @@ const COUNT_OPTIONS = ['1', '2', '3', '4'].map(v => ({ value: v, label: v + ' �
           这条渠道不靠柏宝绘自动生成 tag。主模型在写正文时按下面的格式在回复末尾追加一个占位，
           卡片上的「交给 DSH 出图」会把它送去 DSH：
         </p>
-        <pre class="bbi-dsh-sample">&lt;bbi_image&gt;&lt;dsh&gt;傍晚的天台，林夏靠着栏杆回头，逆光把发梢照透&lt;/dsh&gt;&lt;size&gt;portrait&lt;/size&gt;&lt;/bbi_image&gt;</pre>
+        <pre class="bbi-dsh-sample">&lt;bbi_image&gt;&lt;dsh&gt;人物名称：林夏
+人物服装：米色长风衣，右手收着黑伞
+场景描述：傍晚的天台，她侧身回头，逆光把发梢照透&lt;/dsh&gt;&lt;size&gt;portrait&lt;/size&gt;&lt;/bbi_image&gt;</pre>
+        <p class="bbi-field-hint">
+          三行（人物名称 / 人物服装 / 场景描述）按协议顺序拼在一起，原样进桥接的
+          <code>scene</code> 字段；场景描述一句话就够，旧的一段散文占位也照读照送。
+        </p>
         <p class="bbi-field-hint">
           占位在显示与提示词两条路径上都会被替换掉，永不进 DOM、永不进提示词。
           带 &lt;dsh&gt; 的卡片走这条渠道；没有 &lt;dsh&gt; 的老 tag 仍按原来的 tag 流出图，

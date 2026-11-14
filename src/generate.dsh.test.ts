@@ -124,8 +124,34 @@ describe('generateImage: dsh 分支', () => {
     expect(body.source).toEqual({ chatId: 'c1', messageId: 7, slot: 0 });
   });
 
-  it('角色块走 roles 旁路字段，不混进 characters', async () => {
+  it('三行占位（人物名称 / 人物服装 / 场景描述）按协议顺序一起进 scene', async () => {
     dshReady();
+    acceptThenDone();
+    await generateImage({
+      prompt: '',
+      // 模型常见的两种走样：标签顺序被写歪、冒号用了半角
+      dsh: '场景描述: 深夜的便利店门口，她侧身回头，中景\n人物名称: 林夏\n人物服装: 米色长风衣，右手收着黑伞',
+      size: 'portrait',
+      seed: 11,
+    });
+    const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
+    // 三者一段不丢，且拉直成协议顺序与全角标签 —— DSH 侧看到的形状与阅读器收到的一致
+    expect(body.scene).toBe(
+      '人物名称：林夏\n人物服装：米色长风衣，右手收着黑伞\n场景描述：深夜的便利店门口，她侧身回头，中景',
+    );
+    // 配置集随请求发 moss 真人线（留空时由 effectiveDshBridge 收口）
+    expect(body.configSet).toBe('moss-real');
+  });
+
+  it('旧的一段散文占位原样发（不做强制迁移）', async () => {
+    dshReady();
+    acceptThenDone();
+    await generateImage({ prompt: '', dsh: '傍晚的天台，她靠着栏杆回头', size: 'portrait', seed: 12 });
+    const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(body.scene).toBe('傍晚的天台，她靠着栏杆回头');
+  });
+
+  it('角色块走 roles 旁路字段，不混进 characters', async () => {    dshReady();
     acceptThenDone();
     await generateImage({
       prompt: '',
