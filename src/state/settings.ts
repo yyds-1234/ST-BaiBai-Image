@@ -18,6 +18,7 @@ import {
   vibeMetaFromData,
 } from '@/backends/vibeStore';
 import { DSH_DEFAULT_CONFIG_SET, type DshBridgeConn } from '@/backends/dshBridge';
+import { normalizeDshCharMappings, type DshCharMapping } from '@/state/dshCharMap';
 import { getContext } from '@/st/context';
 import { reactive, watch } from 'vue';
 
@@ -146,8 +147,20 @@ export interface ComfyUISettings extends BackendConn {
  * 而 DSH 侧本来就按 scene 串里出现的名字在自己档案里认人（identities/*.md + line 门禁），
  * 再开一个手填名单只会允许「填的与正文写的不是同一批人」，那种不一致在 DSH 那边
  * 表现为静默不注入，比没有这个开关更难查。故整个字段删除，认人只有名字一条路。
+ *
+ * 【charMappings 是「映射」不是「名单」】它与上面那条撤掉的开关也不一样：撤掉的是
+ * 「让用户手打一份和正文无关的名字清单」，而这里是「把正文里已经出现的名字指到 DSH 的哪份档案」——
+ * 命中判据仍然是正文，映射只决定**长相从哪儿来**（DSH 档案 / 动漫表 / 柏宝绘角色库）。
  */
-export type DshBridgeSettings = DshBridgeConn;
+export interface DshBridgeSettings extends DshBridgeConn {
+  /**
+   * 名字 → DSH 档案 / 动漫角色的映射表（见 state/dshCharMap）。
+   *
+   * 存的是**选择结果**，不是档案快照：DSH 那侧改了 char_block / LoRA，下一单自动跟着变。
+   * 因此这里只有 id 与线，没有外貌文本。
+   */
+  charMappings: DshCharMapping[];
+}
 
 /**
  * NAI 生图模型标识。
@@ -1586,6 +1599,8 @@ function dshBridgeDefaults(): DshBridgeSettings {
     timeoutMs: DSH_BRIDGE_DEFAULT_TIMEOUT_MS,
     configSet: '',
     count: 1,
+    // 空表 = 一个都不映射:所有角色仍走柏宝绘角色库(与升级前逐字一致)。
+    charMappings: [],
   };
 }
 
@@ -1953,6 +1968,9 @@ function normalizeDshBridge(raw: unknown, def: DshBridgeSettings): DshBridgeSett
     timeoutMs: Math.max(5000, Math.round(clampNumber(o.timeoutMs, def.timeoutMs, 5000, 900000))),
     configSet: typeof o.configSet === 'string' ? o.configSet : def.configSet,
     count: Math.round(clampNumber(o.count, def.count, 1, 8)),
+    // 映射表整个走 dshCharMap 的清洗:空行 / 只填一半 / 同名两处都在那里处理,
+    // 面板写入与 hydrate 共用同一套规则(否则面板能存进一个 hydrate 会丢的形态)。
+    charMappings: normalizeDshCharMappings(o.charMappings),
   };
 }
 

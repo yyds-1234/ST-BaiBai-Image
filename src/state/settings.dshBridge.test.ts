@@ -56,6 +56,7 @@ describe('老配置升级', () => {
       timeoutMs: 180000,
       configSet: '',
       count: 1,
+      charMappings: [],
     });
   });
 
@@ -100,6 +101,7 @@ describe('dshBridge 逐字段兜底', () => {
         timeoutMs: 240000,
         configSet: 'anime-ob',
         count: 3,
+        charMappings: [{ name: '林夏', kind: 'archive', ref: '26-小静', line: 'moss-real' }],
       },
     });
     expect(settings.dshBridge).toEqual({
@@ -108,7 +110,24 @@ describe('dshBridge 逐字段兜底', () => {
       timeoutMs: 240000,
       configSet: 'anime-ob',
       count: 3,
+      charMappings: [{ name: '林夏', kind: 'archive', ref: '26-小静', line: 'moss-real' }],
     });
+  });
+
+  it('映射表也逐字段清洗（坏行不进存档，好行原样保留）', async () => {
+    const settings = await hydrateWith({
+      dshBridge: {
+        charMappings: [
+          { name: ' 林夏 ', kind: 'archive', ref: ' 26-小静 ', line: ' moss-real ' },
+          { name: '', kind: 'archive', ref: '26-小静', line: '' },
+          { name: '胡桃', kind: 'nonsense', ref: 'hu tao', line: 'moss-anime' },
+          'junk',
+        ],
+      },
+    });
+    expect(settings.dshBridge.charMappings).toEqual([
+      { name: '林夏', kind: 'archive', ref: '26-小静', line: 'moss-real' },
+    ]);
   });
 
   it('空 configSet 保持空串（= 跟随默认线），不被默认值顶掉', async () => {
@@ -146,6 +165,7 @@ describe('dshBridge 逐字段兜底', () => {
       timeoutMs: 180000,
       configSet: '',
       count: 1,
+      charMappings: [],
     });
   });
 

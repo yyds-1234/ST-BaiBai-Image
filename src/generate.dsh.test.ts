@@ -181,6 +181,40 @@ describe('generateImage: dsh 分支', () => {
     expect(body.roles).toBeUndefined();
     expect(body.characters).toBeUndefined();
   });
+
+  it('档案映射走 characters，与本地角色块同时发（两条通道并行）', async () => {
+    dshReady();
+    acceptThenDone();
+    await generateImage({
+      prompt: '',
+      dsh: '人物名称：林夏与许梨\n人物服装：风衣 / 白裙\n场景描述：傍晚的天台',
+      // 「档案映射」算出来的东西（见 state/dshCharMap 的 planDshCharacters）：
+      // 映射命中的名字写成 `显示名：档案 id`，没命中的仍走 dshRoles。
+      dshCharacters: ['林夏：26-小静'],
+      dshRoles: [{ name: '许梨', charBlock: '1girl, silver hair' }],
+      size: 'portrait',
+      seed: 9,
+    });
+    const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(body.characters).toEqual(['林夏：26-小静']);
+    expect(body.roles).toEqual([{ name: '许梨', charBlock: '1girl, silver hair' }]);
+  });
+
+  it('characters 的空清单同样不发（发 [] 等于声明「这单没有要查档案的人」）', async () => {
+    dshReady();
+    acceptThenDone();
+    await generateImage({
+      prompt: '',
+      dsh: '她站在窗边',
+      dshCharacters: [],
+      dshRoles: [{ name: '林夏', charBlock: '1girl, long hair' }],
+      size: 'portrait',
+      seed: 2,
+    });
+    const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(body.characters).toBeUndefined();
+    expect(body.roles).toHaveLength(1);
+  });
   it('没有 <dsh> 时回落 prompt —— 老 tag 切到本渠道照样能出图', async () => {
     dshReady();
     acceptThenDone();

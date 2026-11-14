@@ -48,9 +48,49 @@ export interface DshHealth {
   llmAvailable: boolean;
   configSets: string[];
   defaultConfigSet: string;
+  /** 查动漫表的线(frontmatter 有 catalogFile 的):这些线上「选角色」选的是表里的角色名,不是档案 id。 */
+  catalogLines: string[];
   /** 场景串长度上限(协议 §3.1 说请求上限是它的两倍)。 */
   promptMaxChars: number;
 }
+
+/**
+ * 一份角色档案的选择器摘要(`GET /identities` 的一项)。
+ *
+ * 只有挑人需要的字段 —— **没有 char_block 原文**(十几份档案加起来几十 KB,选择器一个字都用不上,
+ * 真正的块由 DSH 在出图时自己读)。
+ */
+export interface DshIdentitySummary {
+  /** 档案 id(如 `26-小静`):出图时 `characters` 里冒号后面那一段就是它。 */
+  charId: string;
+  /** 显示名(`小静`)。 */
+  name: string;
+  /** 档案绑定的配置集;空串 = 通用(哪条线都能用)。 */
+  line: string;
+  /** 别名(`瑶瑶` / `yao yao`):占位里用别名写的名字也能对它。 */
+  aliases: string[];
+  /** 形象块字数;0 = 这份档案没有长相(选了也只会挂 LoRA)。 */
+  blockChars: number;
+}
+
+/** 动漫表的一条(`GET /catalog`):`copy_prompt` 不出网,出图时按名字再查一次。 */
+export interface DshCatalogEntry {
+  /** 表里的角色名,如 `hu tao (genshin impact)` —— 映射时冒号后面写这个。 */
+  name: string;
+  /** 作品名(如 `genshin impact`),只用于选择器分组/辨识。 */
+  copyright: string;
+  /** `character` / `style` 之类;柏宝绘只放角色进来。 */
+  kind: string;
+}
+
+/** 一次动漫表检索的结果。 */
+export interface DshCatalogResult {
+  /** 这次查的是哪条线的表(GET /catalog 的 line)。 */
+  line: string;
+  entries: DshCatalogEntry[];
+  total: number;
+}
+
 
 /** 本端支持的协议版本。对不上就直接报错,不静默降级 —— 降级会让人以为「能用但慢」。 */
 export const DSH_PROTOCOL_VERSION = 2;
@@ -126,11 +166,24 @@ export interface DshGenerateValues {
   /** 画面占位散文。 */
   scene: string;
   /**
+   * 名字 → DSH 档案（或动漫表角色名）的映射清单，每项写 `名字：引用`。
+   *
+   * 【为什么是拼好的字符串，而不是 `{ name, ref }`】
+   * 协议 §3.1 的 `characters` 本来就是「字符串数组，冒号前是显示名、冒号后是去档案里查的
+   * 引用」—— 阅读器发的是同一个形状。柏宝绘跟着用同一种表示，DSH 侧就只有一套解析
+   * （`parseCharacterRef`），不必为第二个调用方多写一条分支。
+   *
+   * 【与 roles 的关系】两条通道**语义不同、可以同时给**：
+   *   characters → 名字，DSH 去自己的 identities/ 查形象块、挂 LoRA、过 line 门禁；
+   *   roles      → 块，调用方自带（柏宝绘角色库），DSH 拿来直接用。
+   * 给了 characters 的那些人**不要**再进 roles：同一个人两套长相会在串里打架。
+   */
+  characters?: string[];
+  /**
    * 角色块（旁路通道）：调用方自带的 { name, charBlock }，按出场顺序，第一位站主角位。
    *
-   * 与 characters 是两条互不相干的路：characters 是「名字，去 DSH 档案里查」，
-   * roles 是「块，直接用」。给了 roles 时 DSH 整条走旁路——不读 identities、不查 LoRA、
-   * 不过 line 门禁，块原样拼进正向。柏宝绘（角色由它管理）走这条。
+   * 与 characters 是两条并行通道（见上）。只给 roles 时 DSH 整条走旁路——不读 identities、
+   * 不查 LoRA、不过 line 门禁。柏宝绘在「这单没有任何档案映射命中」时走这条。
    */
   roles?: DshRole[];
   size: Orientation;
@@ -295,10 +348,120 @@ export async function probeDshBridge(conn: DshBridgeConn, signal?: AbortSignal):
     llmAvailable: llm.available === true,
     configSets,
     defaultConfigSet: typeof body.defaultConfigSet === 'string' ? body.defaultConfigSet : '',
+    // 查动漫表的线（有 catalogFile 的）。老插件没有这个字段 → 空数组 = 「哪条线都不查表」，
+    // 面板据此把「动漫角色」那半边置灰，而不是让人选完才发现发不出去。
+    catalogLines: Array.isArray(body.catalogLines)
+      ? body.catalogLines.filter((x): x is string => typeof x === 'string')
+      : [],
     promptMaxChars:
       typeof body.promptMaxChars === 'number' && Number.isFinite(body.promptMaxChars)
         ? body.promptMaxChars
         : 4000,
+  };
+}
+
+/**
+ * 选择器类请求（`/identities`、`/catalog`）的公共 GET：短超时 + 统一翻错。
+ *
+ * 与出图分开的理由：这两条是**人在面板上等**的请求，用 180s 的出图超时等于卡死面板；
+ * 而它们的失败处置也和出图不同（重试就是再点一次按钮），故超时归 COMFY_UNAVAILABLE
+ * 那条「等会儿再来」的话术，不新开错误码。
+ */
+async function getSelectorJson(
+  conn: DshBridgeConn,
+  path: string,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  if (!conn.url.trim()) throw dshError('BAD_REQUEST', '请先填写 DSH 桥接地址');
+  const timeout = Math.min(conn.timeoutMs || 180000, 15000);
+  const linked = linkSignals(timeout, signal);
+  let response: Response;
+  try {
+    response = await fetch(endpoint(conn.url, path), { method: 'GET', headers: headers(conn), signal: linked.signal });
+  } catch (error) {
+    const why = linked.reason();
+    if (why === 'abort') throw error;
+    throw dshError(TIMEOUT_CODE, `请求 DSH 超时（${Math.round(timeout / 1000)}s）：${conn.url.trim()}`);
+  }
+  linked.reason();
+  // 404 在桥接里只有一个含义：对面那版插件没这条路由（路由表是写死的）。
+  if (response.status === 404) {
+    throw dshError(
+      'BAD_REQUEST',
+      'DSH 侧没有这条路由（/identities、/catalog 要 dsh-story-image 2.7.0+）：'
+      + '先把插件升级到新版，再回来点刷新',
+    );
+  }
+  const body = (await readJson(response)) as Record<string, unknown> | null;
+  if (!response.ok || !body || body.ok === false) throw failureFrom(response.status, body);
+  return body;
+}
+
+/**
+ * 拉 DSH 侧的角色档案清单（`GET /identities`，桥接 2.7.0）。
+ *
+ * 为什么柏宝绘要自己拉：**档案在 DSH 那台机器的磁盘上**，浏览器读不到；而「把占位里的人
+ * 映射到哪份档案」这件事只能由看得见档案名的这一侧来问。只读，不改 DSH 任何东西。
+ */
+export async function listDshIdentities(
+  conn: DshBridgeConn,
+  signal?: AbortSignal,
+): Promise<DshIdentitySummary[]> {
+  const body = await getSelectorJson(conn, 'identities', signal);
+  const list = Array.isArray(body.identities) ? body.identities : [];
+  return list
+    .map((raw): DshIdentitySummary | null => {
+      const item = (raw ?? {}) as Record<string, unknown>;
+      const charId = typeof item.charId === 'string' ? item.charId.trim() : '';
+      if (!charId) return null;
+      return {
+        charId,
+        name: typeof item.name === 'string' ? item.name : charId,
+        line: typeof item.line === 'string' ? item.line : '',
+        aliases: Array.isArray(item.aliases)
+          ? item.aliases.filter((x): x is string => typeof x === 'string' && !!x)
+          : [],
+        blockChars: typeof item.blockChars === 'number' ? item.blockChars : 0,
+      };
+    })
+    .filter((x): x is DshIdentitySummary => x !== null);
+}
+
+/**
+ * 搜动漫表（`GET /catalog`，桥接 2.9.0）。
+ *
+ * 动漫线的角色映射**映射的不是档案，而是表里的角色名**（`hu tao (genshin impact)`），
+ * 所以选择器得能按关键词把表里的名字翻出来。表可能有几万条，故必须带 `q`（服务端按关键词过滤）。
+ *
+ * `line` 不传则用 DSH 的默认集；那条线没配 `catalogFile` 时服务端回 400 并在消息里说清
+ * 「这条线只能选档案」—— 原样透给用户（比本地再猜一遍准确）。
+ */
+export async function searchDshCatalog(
+  conn: DshBridgeConn,
+  query: { line?: string; q: string; limit?: number },
+  signal?: AbortSignal,
+): Promise<DshCatalogResult> {
+  const params = new URLSearchParams();
+  if (query.line?.trim()) params.set('line', query.line.trim());
+  if (query.q.trim()) params.set('q', query.q.trim());
+  params.set('limit', String(Math.min(50, Math.max(1, Math.floor(query.limit ?? 20)))));
+  const body = await getSelectorJson(conn, `catalog?${params.toString()}`, signal);
+  const entries = Array.isArray(body.entries) ? body.entries : [];
+  return {
+    line: typeof body.line === 'string' ? body.line : '',
+    total: typeof body.total === 'number' ? body.total : entries.length,
+    entries: entries
+      .map((raw): DshCatalogEntry | null => {
+        const item = (raw ?? {}) as Record<string, unknown>;
+        const name = typeof item.name === 'string' ? item.name.trim() : '';
+        if (!name) return null;
+        return {
+          name,
+          copyright: typeof item.copyright === 'string' ? item.copyright : '',
+          kind: typeof item.kind === 'string' ? item.kind : '',
+        };
+      })
+      .filter((x): x is DshCatalogEntry => x !== null),
   };
 }
 
@@ -329,8 +492,9 @@ export async function generateDshImage(
   };
   // 可选字段一律「有才发」：发空串会让 DSH 侧把「没填」当成「显式要求空」，
   // 例如 configSet 空串本应表示「用默认集」，发过去可能被当成一个不存在的集 id。
-  // roles 走 roles 字段（不是 characters）：两条通道语义不同，混用会让 DSH 分不清
-  // 「这是名字还是块」。
+  // characters 与 roles 是两条并行通道（名字查档案 / 自带块），可以同时发：
+  // DSH 会把映射过的人按档案解析、其余人用块，见协议 §3.1。
+  if (values.characters?.length) payload.characters = values.characters.filter(text => text.trim());
   if (values.roles?.length) payload.roles = values.roles;
   if (conn.configSet?.trim()) payload.configSet = conn.configSet.trim();
   if (values.negative?.trim()) payload.negative = values.negative.trim();

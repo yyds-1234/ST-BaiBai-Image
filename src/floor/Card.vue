@@ -38,6 +38,7 @@ import { formatGenerationMeta } from '@/generationMeta';
 import { channelLabel } from '@/pages/backend/channelSwitch';
 import { activeComfyPreset, activeOrientationLock, effectiveDshBridge, imageDisplayMaxHeight, settings } from '@/state/settings';
 import { chineseAppearanceForText, rolesForText, rolesWithoutAppearance } from '@/state/charTags';
+import { planDshCharacters } from '@/state/dshCharMap';
 import { beginImage, failImage, finishImage, patchImagePrompt, safeHistory } from '@/state/history';
 import { copyText } from '@/st/clipboard';
 import { getContext } from '@/st/context';
@@ -297,6 +298,23 @@ async function generate(): Promise<void> {
   if (busy.value || planning.value || !configured.value) return;
   const slot = key.value;
   const currentHash = hash.value;
+  // 这一单画谁、长相从哪儿来，在**发请求前**一次算清（纯函数，见 state/dshCharMap）：
+  //   - characters：映射命中的名字 → DSH 档案 / 动漫表角色名（DSH 那边查形象块、挂 LoRA、过线门禁）；
+  //   - roles：没被映射的人 → 柏宝绘角色库的英文块。
+  //
+  // 为什么用 props.dsh 匹配而不是 props.characters：占位模式的世界书要求模型把名字写在
+  // 「人物名称：」那一行（见 autoTag/dshPlaceholder 的 v2.1 协议），故 props.characters 恒空；
+  // 也不该用 props.prompt（占位没有 tag）。名字在这一行里出现得最可靠，认人就靠它。
+  const dshPlan = dshActive.value
+    ? planDshCharacters({
+      text: props.dsh,
+      roles: rolesForText(props.dsh),
+      mappings: settings.dshBridge.charMappings,
+      // 与真正发出去的那条线对齐：面板留空时 effectiveDshBridge 已收口成 moss-real，
+      // 这里必须用同一个口径，否则「映射绑在 moss-real」会被误判成跨线。
+      line: effectiveDshBridge().configSet,
+    })
+    : { characters: [], roles: [], skipped: [] };
   // 本次任务的输入全部就地取值:请求在途时本组件很可能已被重水合销毁
   // (任一兄弟槽位出图都会触发全楼重建),销毁后再读 props 不可靠。
   const job = {
@@ -313,15 +331,8 @@ async function generate(): Promise<void> {
     characters: props.characters.map(character => ({ ...character })),
     size: effectiveSize.value,
     dsh: props.dsh,
-    // 角色由柏宝绘管理:按画面散文去角色库里认人,把**英文块**一起交上去。
-    //
-    // 走 DSH 的 roles 旁路:它收到块就直接拼进正向,不查自己的 identities 档案、
-    // 不过 line 门禁。所以两边的角色库不必同名、不必同步——角色只归柏宝绘管。
-    //
-    // 为什么用 props.dsh 匹配而不是 props.characters:占位模式的世界书要求模型把名字写在
-    // 「人物名称：」那一行(见 autoTag/dshPlaceholder 的 v2.1 协议),故 props.characters 恒空;
-    // 也不该用 props.prompt(占位没有 tag)。名字在这一行里出现得最可靠,认人就靠它。
-    dshRoles: dshActive.value ? rolesForText(props.dsh) : [],
+    dshCharacters: dshPlan.characters,
+    dshRoles: dshPlan.roles,
     // 占位里叫得出名字、但角色库里没给他写外貌的那些人。DSH 会照常出图（零个角色），
     // 图里这个人就成了没有设定的路人 —— 这件事自己不发声，故必须在这里捞出来告诉用户。
     dshRolesMissingAppearance: dshActive.value ? rolesWithoutAppearance(props.dsh) : [],
@@ -356,6 +367,20 @@ async function generate(): Promise<void> {
       `角色「${zhOnlyNames.join('、')}」只填了中文外貌：那一栏只给 MOSS 那条线用，`
       + 'DSH 写手这条渠道不吃它，所以这张图里 TA 的长相由模型随机决定。'
       + '要在 DSH 里固定长相，请到「角色管理」补一句英文描述（自然语言外貌）。',
+      '柏宝绘',
+    );
+  }
+  // 「映射了、但这单没生效」——同样必须出声：用户以为「我把林夏指到 26-小静 了」，
+  // 结果那行映射绑的是另一条线，而画面照样出成功。不说的话，症状只是「脸不对」。
+  if (dshPlan.skipped.length) {
+    const line = effectiveDshBridge().configSet;
+    const detail = dshPlan.skipped
+      .map(item => `「${item.name} → ${item.ref}」`)
+      .join('、');
+    toastr.warning(
+      `档案映射 ${detail} 绑的不是当前这条线（${line}），这单没有发出去：`
+      + 'DSH 侧跨线注入会被整单拦下。到「渠道 → DSH 写手 → 档案映射」把这几行改成当前线'
+      + '（或把配置集切到它绑的那条线）。',
       '柏宝绘',
     );
   }

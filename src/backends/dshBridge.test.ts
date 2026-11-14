@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { generateDshImage, probeDshBridge, type DshBridgeConn } from '@/backends/dshBridge';
+import { generateDshImage, listDshIdentities, probeDshBridge, searchDshCatalog, type DshBridgeConn } from '@/backends/dshBridge';
 
 /**
  * DSH 桥接后端的契约（见 docs/DSH-BRIDGE-PROTOCOL.md v2）：
@@ -124,6 +124,24 @@ describe('generateDshImage（协议 v2：入队 + 轮询）', () => {
     });
     expect(body.configSet).toBeUndefined();
     expect(body.negative).toBeUndefined();
+    // 只给块时**不发** characters：空数组等于声明「这单没有要查档案的人」，
+    // 老 DSH 收到它会走「零个角色」那条路（图里就没脸了）。
+    expect(body.characters).toBeUndefined();
+  });
+
+  it('档案映射与角色块同时发（协议 §3.1 两条通道并行）', async () => {
+    respondWith(accepted(), jsonResponse(200, doneResult()));
+
+    await generateDshImage(conn({ configSet: 'moss-real' }), {
+      ...VALUES,
+      characters: ['林夏：26-小静'],
+      roles: [{ name: '许梨', charBlock: '1girl, silver hair' }],
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body)) as Record<string, unknown>;
+    expect(body.characters).toEqual(['林夏：26-小静']);
+    expect(body.roles).toEqual([{ name: '许梨', charBlock: '1girl, silver hair' }]);
+    expect(body.configSet).toBe('moss-real');
   });
 
   it('轮询打到 /job/{jobId} 上，方法 GET', async () => {
@@ -339,10 +357,28 @@ describe('probeDshBridge', () => {
       llmAvailable: true,
       configSets: ['anime-ob', 'moss-real'],
       defaultConfigSet: 'anime-ob',
+      // 老插件没有这个字段 → 空数组（面板据此把「动漫角色」那半边说清楚，而不是让人选完才发现发不出去）
+      catalogLines: [],
       promptMaxChars: 4000,
     });
     const [url] = fetchMock.mock.calls[0] as [string];
     expect(url).toBe('http://127.0.0.1:3080/story-image-bridge/health');
+  });
+
+  it('查动漫表的线随探活回来（面板据此提示哪条线能映射动漫角色）', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        ok: true,
+        protocol: 2,
+        version: '1.0.0',
+        llm: { available: true },
+        configSets: ['moss-anime', 'moss-real'],
+        defaultConfigSet: 'moss-real',
+        catalogLines: ['moss-anime'],
+      }),
+    );
+    const health = await probeDshBridge(conn());
+    expect(health.catalogLines).toEqual(['moss-anime']);
   });
 
   it('老版本（没有 protocol 字段）按 1 处理，面板据此提示升级', async () => {
@@ -367,5 +403,79 @@ describe('probeDshBridge', () => {
     const error = (await probeDshBridge(conn()).catch(e => e)) as Error & { code?: string };
     expect(error.code).toBe('COMFY_UNAVAILABLE');
     expect(error.message).toContain('连接 DSH 超时');
+  });
+});
+
+describe('listDshIdentities（档案清单，面板的「拉取」）', () => {
+  it('GET /identities 并把摘要洗干净（缺字段的行不要）', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        ok: true,
+        identities: [
+          { charId: '26-小静', name: '小静', line: 'moss-real', aliases: ['瑶瑶', ''], blockChars: 1365 },
+          { charId: '', name: '空 id', line: 'moss-real' },
+          'junk',
+        ],
+      }),
+    );
+    const list = await listDshIdentities(conn());
+    expect(list).toEqual([{ charId: '26-小静', name: '小静', line: 'moss-real', aliases: ['瑶瑶'], blockChars: 1365 }]);
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe('http://127.0.0.1:3080/story-image-bridge/identities');
+  });
+
+  it('404 = 对面插件太旧，给的是「去升级」而不是「网络不通」', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('', { status: 404 }));
+    const error = (await listDshIdentities(conn()).catch(e => e)) as Error & { code?: string };
+    expect(error.code).toBe('BAD_REQUEST');
+    expect(error.message).toContain('2.7.0');
+  });
+
+  it('服务端的 500 原样透传它的原因（档案目录读不了要让人知道是目录问题）', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(500, { ok: false, code: 'INTERNAL', error: '角色档案目录读不了：EACCES' }),
+    );
+    const error = (await listDshIdentities(conn()).catch(e => e)) as Error & { code?: string };
+    expect(error.code).toBe('INTERNAL');
+    expect(error.message).toContain('EACCES');
+  });
+});
+
+describe('searchDshCatalog（动漫表检索，动漫线的映射来源）', () => {
+  it('带 line 与 q 打 /catalog，回 entries 与 total', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        ok: true,
+        line: 'moss-anime',
+        query: 'hu tao',
+        total: 3,
+        entries: [
+          { name: 'hu tao (genshin impact)', copyright: 'genshin impact', kind: 'character' },
+          { name: '', copyright: 'x', kind: 'character' },
+        ],
+      }),
+    );
+    const result = await searchDshCatalog(conn(), { line: 'moss-anime', q: 'hu tao', limit: 5 });
+    expect(result).toEqual({
+      line: 'moss-anime',
+      total: 3,
+      entries: [{ name: 'hu tao (genshin impact)', copyright: 'genshin impact', kind: 'character' }],
+    });
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe('http://127.0.0.1:3080/story-image-bridge/catalog?line=moss-anime&q=hu+tao&limit=5');
+  });
+
+  it('那条线不查表时把 400 的说明原样给用户（本地不再猜一遍）', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(400, {
+        ok: false,
+        code: 'BAD_REQUEST',
+        error: '配置集 "moss-real" 不查动漫表（frontmatter 没有 catalogFile）：这条线只能选档案，不能映射动漫角色名',
+      }),
+    );
+    const error = (await searchDshCatalog(conn(), { line: 'moss-real', q: 'hu tao' }).catch(e => e)) as
+      & Error & { code?: string };
+    expect(error.code).toBe('BAD_REQUEST');
+    expect(error.message).toContain('只能选档案');
   });
 });

@@ -1,11 +1,20 @@
 <script setup lang="ts">
 import { DSH_WORLDBOOK_ENTRY, DSH_WORLDBOOK_TITLE } from '@/autoTag/dshPlaceholder';
-import { DSH_PROTOCOL_VERSION, probeDshBridge, type DshHealth } from '@/backends/dshBridge';
+import {
+  DSH_PROTOCOL_VERSION,
+  listDshIdentities,
+  probeDshBridge,
+  searchDshCatalog,
+  type DshCatalogEntry,
+  type DshHealth,
+  type DshIdentitySummary,
+} from '@/backends/dshBridge';
 import BbiCombo from '@/components/BbiCombo.vue';
 import BbiSelect from '@/components/BbiSelect.vue';
 import Collapsible from '@/components/Collapsible.vue';
 import Icon from '@/components/Icon.vue';
 import { copyText } from '@/st/clipboard';
+import { dshMappingLabel, dshMappingValue, parseDshMappingValue } from '@/state/dshCharMap';
 import { effectiveDshBridge, settings } from '@/state/settings';
 import { computed, ref } from 'vue';
 
@@ -85,6 +94,153 @@ const timeoutSec = computed({
 
 const COUNT_OPTIONS = ['1', '2', '3', '4'].map(v => ({ value: v, label: v + ' 张' }));
 
+// ── 档案映射 ───────────────────────────────────────────────────────────────
+//
+// 面板只负责「挑」:把 DSH 那侧的档案清单（GET /identities）和动漫表检索结果
+// （GET /catalog）拉进来当候选,存成 settings.dshBridge.charMappings。
+// **怎么用**在 state/dshCharMap 里（纯函数），这里一行判定都不写 —— 面板与出图
+// 各有一套判定时，「面板里选好了、出图却不生效」会变成查不出来的问题。
+
+/** 这次拉回来的档案清单。空 = 还没拉过（面板照样能显示已存的映射）。 */
+const identities = ref<DshIdentitySummary[]>([]);
+/** 这次搜出来的动漫角色（带它所属的线，映射时要存进去）。 */
+const catalogHits = ref<{ entry: DshCatalogEntry; line: string }[]>([]);
+const catalogQuery = ref('');
+const mappingBusy = ref(false);
+const identityNote = ref('');
+const catalogNote = ref('');
+
+/** 当前要走的配置集：与出图同一个口径（留空已收口成 moss-real）。 */
+const currentLine = computed(() => effectiveDshBridge().configSet);
+
+/**
+ * 这次拉回来的档案里，有几份能在这条线上用（同线 + line 留空的通用档）。
+ *
+ * 只在提示语里用：拉回 8 份、其中 6 份绑在别的线时，「拉到了 8 份」会让人以为都能选。
+ * 选择器**不**按线过滤 —— 面板也是「把线切过去之前先配好」的地方，藏起来只会让人以为那份档案不存在。
+ */
+const usableOnLine = computed(
+  () => identities.value.filter(item => !item.line || item.line === currentLine.value).length,
+);
+
+/**
+ * 候选池：档案 + 动漫角色。
+ *
+ * 档案**不按当前线过滤** —— 面板也是「把这条线切过去之前先配好」的地方，
+ * 藏起来只会让人以为那份档案不存在；grep 不到时的那句提醒在出图前给（见 Card 的跳线提醒）。
+ */
+const mappingPool = computed(() => {
+  const out: { value: string; label: string; line: string }[] = [];
+  for (const item of identities.value) {
+    const line = item.line;
+    out.push({
+      value: dshMappingValue({ kind: 'archive', ref: item.charId }),
+      label: dshMappingLabel({ kind: 'archive', ref: item.charId, line }) + (item.blockChars > 0 ? '' : ' · 无形象块'),
+      line,
+    });
+  }
+  for (const hit of catalogHits.value) {
+    out.push({
+      value: dshMappingValue({ kind: 'catalog', ref: hit.entry.name }),
+      label: dshMappingLabel({ kind: 'catalog', ref: hit.entry.name, line: hit.line }),
+      line: hit.line,
+    });
+  }
+  return out;
+});
+
+/**
+ * 下拉候选。
+ *
+ * 除了候选池，还要补两类「池子里没有但必须能显示」的值：
+ *   1. 已存进设置、这次没拉到的（换了机器 / 还没点刷新）—— 否则面板看起来像把配置弄丢了；
+ *   2. 空值（未选择）—— 加了新行还没挑目标时就是这个状态。
+ */
+const mappingOptions = computed(() => {
+  const options = [{ value: '', label: '未选择' }];
+  const seen = new Set<string>(['']);
+  const push = (value: string, label: string) => {
+    if (seen.has(value)) return;
+    seen.add(value);
+    options.push({ value, label });
+  };
+  for (const item of mappingPool.value) push(item.value, item.label);
+  for (const row of settings.dshBridge.charMappings) {
+    if (!row.name || !row.ref) continue;
+    push(dshMappingValue(row), dshMappingLabel(row));
+  }
+  return options;
+});
+
+function addMapping(): void {
+  settings.dshBridge.charMappings.push({ name: '', kind: 'archive', ref: '', line: '' });
+}
+
+function removeMapping(index: number): void {
+  settings.dshBridge.charMappings.splice(index, 1);
+}
+
+/**
+ * 下拉选中 → 写回这一行。
+ *
+ * 线的来源:候选项自己带来的（档案绑的线 / 动漫表属于哪条线）优先；
+ * 池子里找不到（老值）时保留原来存的线，别把一条有效映射改成「无主」。
+ */
+function onPickMapping(index: number, value: string): void {
+  const row = settings.dshBridge.charMappings[index];
+  if (!row) return;
+  const picked = parseDshMappingValue(value);
+  if (!picked) {
+    row.ref = '';
+    return;
+  }
+  row.kind = picked.kind;
+  row.ref = picked.ref;
+  const hit = mappingPool.value.find(item => item.value === value);
+  if (hit) row.line = hit.line;
+}
+
+/** 拉档案清单；顺手把已存映射的线对齐到档案当前的线（档案被挪过线时免得留一条过期的线）。 */
+async function refreshIdentities(): Promise<void> {
+  if (mappingBusy.value) return;
+  mappingBusy.value = true;
+  identityNote.value = '';
+  try {
+    identities.value = await listDshIdentities(effectiveDshBridge());
+    for (const row of settings.dshBridge.charMappings) {
+      if (row.kind !== 'archive' || !row.ref) continue;
+      const hit = identities.value.find(item => item.charId === row.ref);
+      if (hit) row.line = hit.line;
+    }
+    identityNote.value = identities.value.length
+      ? `拉到 ${identities.value.length} 份档案（其中 ${usableOnLine.value} 份能在这条线（${currentLine.value}）上用）`
+      : 'DSH 侧一份档案都没有：identities/ 目录是空的';
+  } catch (error) {
+    identityNote.value = errorMessage(error);
+  } finally {
+    mappingBusy.value = false;
+  }
+}
+
+/** 搜动漫表。只有配了 catalogFile 的线有结果，别的线服务端会回 400 并说明原因。 */
+async function searchCatalog(): Promise<void> {
+  const q = catalogQuery.value.trim();
+  if (!q || mappingBusy.value) return;
+  mappingBusy.value = true;
+  catalogNote.value = '';
+  try {
+    const result = await searchDshCatalog(effectiveDshBridge(), { line: currentLine.value, q, limit: 20 });
+    catalogHits.value = result.entries.map(entry => ({ entry, line: result.line || currentLine.value }));
+    catalogNote.value = result.total > result.entries.length
+      ? `「${result.line || currentLine.value}」的表里命中 ${result.total} 条，只列前 ${result.entries.length} 条（换个更具体的关键词）`
+      : `「${result.line || currentLine.value}」的表里命中 ${result.total} 条`;
+  } catch (error) {
+    catalogNote.value = errorMessage(error);
+  } finally {
+    mappingBusy.value = false;
+  }
+}
+
 </script>
 <template>
   <div class="panel">
@@ -135,6 +291,7 @@ const COUNT_OPTIONS = ['1', '2', '3', '4'].map(v => ({ value: v, label: v + ' �
           <p class="bbi-field-hint">
             配置集决定成品串的写法与底模；<b>留空 = moss 真人线（moss-real）</b>，
             与阅读器随请求发的是同一个字段。点一次「测试连接」可拉回 DSH 侧已有的清单。
+            想映射动漫角色，得选一条<b>查动漫表</b>的线（如 moss-anime）。
           </p>
         </div>
 
@@ -191,7 +348,89 @@ const COUNT_OPTIONS = ['1', '2', '3', '4'].map(v => ({ value: v, label: v + ' �
           <p v-if="health.configSets.length" class="bbi-field-hint">
             可用配置集：{{ health.configSets.join('、') }}
           </p>
+          <p class="bbi-field-hint">
+            查动漫表（能映射动漫角色）的线：{{ health.catalogLines.length ? health.catalogLines.join('、') : '没有（这些线只能映射档案）' }}
+          </p>
         </div>
+      </Collapsible>
+
+      <Collapsible title="档案映射（可选）" :open="false">
+        <p class="bbi-field-hint">
+          占位「人物名称：」里写的名字，可以指到 DSH 那侧的角色来源：<b>档案</b>（identities/*.md，
+          带形象块、能挂 LoRA、有线门禁）或<b>动漫角色</b>（只有查动漫表的线才有，如 moss-anime）。
+          没映射的人照旧用柏宝绘角色库的外貌块 —— 两路可以同时用。
+        </p>
+        <p class="bbi-field-hint">
+          「名字」必须与占位里写的<b>一字不差</b>；映射只在名字出现在这一条的占位里时才发出去。
+          档案绑在哪条线就只在哪条线生效（跨线会让整单被 DSH 拦下，所以出图前会先按线滤掉并提醒）。
+        </p>
+
+        <div class="conn-actions">
+          <button class="bbi-btn" type="button" :disabled="mappingBusy" @click="refreshIdentities">
+            <Icon name="refresh" />
+            {{ mappingBusy ? '读取中…' : '拉取档案清单' }}
+          </button>
+          <button class="bbi-btn" type="button" @click="addMapping">添加一行</button>
+        </div>
+        <p v-if="identityNote" class="bbi-field-hint">{{ identityNote }}</p>
+        <p v-else class="bbi-field-hint">
+          档案在 DSH 那台机器上，柏宝绘读不到，只能问它要清单；这个按钮只读，不改 DSH 任何东西。
+        </p>
+
+        <div class="bbi-field">
+          <div class="bbi-field-head">
+            <span class="bbi-field-label">搜动漫角色</span>
+          </div>
+          <div class="dsh-map-search">
+            <input
+              class="bbi-input"
+              type="text"
+              v-model="catalogQuery"
+              placeholder="关键词，如 hu tao / 胡桃"
+              spellcheck="false"
+              @keyup.enter="searchCatalog"
+            />
+            <button
+              class="bbi-btn"
+              type="button"
+              :disabled="mappingBusy || !catalogQuery.trim()"
+              @click="searchCatalog"
+            >
+              搜索
+            </button>
+          </div>
+          <p class="bbi-field-hint">
+            {{ catalogNote || '搜到的角色名会出现在下面每一行的下拉里；当前线不查动漫表时 DSH 会说清原因。' }}
+          </p>
+        </div>
+
+        <div v-if="settings.dshBridge.charMappings.length" class="dsh-map-list">
+          <div v-for="(row, index) in settings.dshBridge.charMappings" :key="index" class="dsh-map-row">
+            <input
+              class="bbi-input"
+              type="text"
+              v-model="row.name"
+              placeholder="占位里的名字"
+              spellcheck="false"
+              :aria-label="`第 ${index + 1} 行的名字`"
+            />
+            <BbiSelect
+              :model-value="row.ref ? dshMappingValue(row) : ''"
+              :options="mappingOptions"
+              :aria-label="`第 ${index + 1} 行映射到`"
+              @update:model-value="onPickMapping(index, $event)"
+            />
+            <button
+              class="bbi-btn dsh-map-del"
+              type="button"
+              :aria-label="`删除映射 ${row.name || '这一行'}`"
+              @click="removeMapping(index)"
+            >
+              <Icon name="trash" :size="13" />
+            </button>
+          </div>
+        </div>
+        <p v-else class="bbi-field-hint">还没有映射行：先「拉取档案清单」，再「添加一行」。</p>
       </Collapsible>
 
       <Collapsible title="写入方式（占位）" :open="false">
@@ -251,5 +490,39 @@ const COUNT_OPTIONS = ['1', '2', '3', '4'].map(v => ({ value: v, label: v + ' �
   overflow-x: auto;
   white-space: pre;
   tab-size: 2;
+}
+
+/* 映射行：名字 / 目标 / 删除。名字窄、目标宽（档案 id + 线要放得下），删除键定宽。
+   minmax(0, …) 是关键：grid 子项默认 min-width:auto，输入框会被内容撑破列宽。 */
+.dsh-map-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.dsh-map-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.6fr) 32px;
+  gap: 8px;
+  align-items: center;
+}
+.dsh-map-row > * {
+  min-width: 0;
+}
+.dsh-map-del {
+  padding: 0;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.dsh-map-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+.dsh-map-search > * {
+  min-width: 0;
 }
 </style>

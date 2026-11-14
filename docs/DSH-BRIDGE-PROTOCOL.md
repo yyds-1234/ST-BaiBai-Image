@@ -45,14 +45,17 @@
   "llm": { "available": true, "provider": "opendesign", "model": "deepseek-v4.1-flash", "mode": "session" },
   "configSets": ["moss-real", "moss-anime"],
   "defaultConfigSet": "moss-real",
+  "catalogLines": ["moss-anime"],
   "promptMaxChars": 4000,
-  "bridge": { "version": "2.0.0", "concurrency": 2, "active": 0, "queued": 0, "tokenRequired": false }
+  "bridge": { "version": "2.13.0", "concurrency": 2, "active": 0, "queued": 0, "tokenRequired": false }
 }
 ```
 
 - `protocol: 2` 是**能力判据**：柏宝绘发现协议版本 < 2 就说明对端还是 v1，直接报错提示升级，不静默降级。
 - `llm.available=false` 时仍返回 200（通道通、写串能力不可用）。
 - `llm.mode`：`'session'`（v2，写串走真实会话）｜`'direct'`（v1 兼容，直连补全）。
+- `catalogLines`：**查动漫表的线**（配置集 frontmatter 有 `catalogFile` 的）。面板用它说清
+  「哪条线能映射动漫角色」；老插件没有这个字段 → 柏宝绘按空数组处理（= 哪条线都不查表）。
 
 ## 3. `POST {base}/generate` —— 只入队
 
@@ -61,34 +64,33 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `scene` | string | 是 | **画面占位原文**：v2.0 的三行中文（人物名称 / 人物服装 / 场景描述）；旧版一段散文照样收。上限 `promptMaxChars × 2`。 |
-| `roles` | `{name,charBlock}[]` | 否 | **柏宝绘实际走的字段**。角色旁路：DSH 不读 identities/、不查档案、不过 line 门禁、不套用 LoRA / 风格档，`charBlock` 原样拼进正向（第一个站主角位）。`charBlock` **两种写法都合法**：一句连贯英文描述（推荐，贴散文流底模）或一串 danbooru 短 tag；DSH 不判别、不转换。角色由柏宝绘管理，两边角色库无需同名、无需同步。 |
-| `characters` | string[] | 否 | 名字数组，走 DSH 自己的档案：拿名字去 identities/*.md 认人、挂 LoRA、过 line 门禁。curl 手写 / 工具调用用这条；占位模式下柏宝绘不传它。 |
-| `size` | `'portrait'` | `'landscape'` | 否 | 默认 `portrait`。DSH 会按它摆正宽高（对调，像素总数不变）。 |
+| `roles` | `{name,charBlock}[]` | 否 | 角色块旁路：DSH 不查档案、不过 line 门禁、不套用 LoRA / 风格档，`charBlock` 交给写手并拼进正向（第一个站主角位）。`charBlock` **两种写法都合法**：一句连贯英文描述（推荐，贴散文流底模）或一串 danbooru 短 tag；DSH 不判别、不转换。柏宝绘用它送**没做档案映射**的人。 |
+| `characters` | string[] | 否 | 名字数组，走 DSH 自己的档案：拿名字去 identities/*.md 认人、挂 LoRA、过 line 门禁。每项可写 `显示名：引用`（冒号前是写手与回执看到的名字，冒号后是去档案查的 id / 动漫表角色名）；不带冒号时整串当引用。柏宝绘用它送**档案映射命中**的人。 |
+| `size` | `'portrait'` \| `'landscape'` | 否 | 默认 `portrait`。DSH 会按它摆正宽高（对调，像素总数不变）。 |
 | `configSet` | string | 否 | 配置集 id。柏宝绘把空串收口成 **`moss-real`**（moss 真人线）再发，与阅读器发配置集同字段；DSH 侧仍按原语义「留空用默认集」。 |
 | `negative` | string | 否 | 追加负向串；与配置集 `negativeHint` **合并**，不替换。 |
 | `count` | integer | 否 | 1..8，默认 1。柏宝绘只落第一张。 |
 | `seed` | integer | 否 | 复现种子；0/缺省 = 随机。 |
 | `source` | object | 否 | `{ chatId, messageId, slot }`，纯诊断，进 `runs.jsonl`，不进提示词。 |
 
-> **角色归属（v2 起定死）：两条互不相干的通道**
+> **角色来源（v2 起的定死口径）：两条通道，可以同时给**
 >
-> | | `roles`（旁路） | `characters`（档案） |
+> | | `roles`（旁路块） | `characters`（名字 → 档案/表） |
 > |---|---|---|
-> | 谁管角色 | **柏宝绘** | DSH 插件 |
-> | 形象块从哪来 | 请求里的 `charBlock`，原样拼 | `identities/<id>.md` 的 `char_block` |
+> | 谁管长相 | **柏宝绘角色库** | DSH 插件（`identities/*.md` 或动漫表） |
+> | 形象块从哪来 | 请求里的 `charBlock`，交给写手 | 档案的 `char_block` / 动漫表的 `copy_prompt` |
 > | LoRA | 不挂 | 按档案挂 |
 > | 风格档 / 剖面档 | 不套用 | 按档案 |
-> | `line` 门禁 | **不参与** | 参与 |
-> | 两边名字要对上吗 | **不需要** | 必须对得上 |
+> | `line` 门禁 | **不参与** | 参与（跨线默认整单报错） |
+> | 两边名字要对上吗 | **不需要** | 必须对得上（或由调用方映射） |
 >
-> 柏宝绘走 `roles`：它看得见正文、知道这一轮谁在场、长什么样，把英文块直接送过来。
-> DSH 收到块就拼，**完全不碰自己的角色体系**——所以两边的角色库不必同名、不必同步，
-> 柏宝绘新增一个角色也不需要去 DSH 那边建档案。
+> 合并规则（2026-11-14 起）：`characters` 里的人**先入位**（第一位站主角位、按档案挂 LoRA），
+> `roles` 里的块**追加在后面**（没有 LoRA / 风格档）。只给 `roles` 时整条走老旁路、一个词都不从
+> identities 拿 —— 与升级前逐字一致。
 >
-> `characters` 是原来那条路，一字未改：给名字，DSH 去档案里查、挂 LoRA、过门禁。
-> curl 手写与在会话里直接调 `generate_story_image` 走它。
->
-> 两者同时给时 `roles` 优先（调用方显式给了块，就以块为准）。
+> 为什么允许并存：柏宝绘这两条都要 —— 用户在「档案映射」里把「林夏」指到 DSH 的 `26-小静`（走
+> `characters`，能用档案的长相与 LoRA），同一张图里的旁人仍可能只在他自己的角色库里（走 `roles`）。
+> 二选一会让人被迫在「这张图少一个人的长相」和「那张图挂不上 LoRA」之间挑。
 
 ### 3.2 立即响应（202）
 
@@ -157,6 +159,43 @@
 
 未知 `jobId` → 404 `{ ok:false, code:'NO_SUCH_JOB' }`。任务默认保留 **30 分钟**（`bridge.jobTtlMs`）后回收。
 
+## 4.5 选择器接口（只读，给面板挑人用）
+
+「把占位里的人名映射到 DSH 的角色」这件事只能由看得见档案的那一侧回答 —— 档案在 DSH 那台
+机器的磁盘上，浏览器读不到。故有两条只读接口，都**不产生任务、不写任何东西**。
+
+### `GET {base}/identities`
+
+```json
+{
+  "ok": true,
+  "identities": [
+    { "charId": "26-小静", "name": "小静", "line": "moss-real", "aliases": ["瑶瑶", "yao yao"], "blockChars": 1365 }
+  ]
+}
+```
+
+- 只回选择器需要的字段，**不回 `char_block` 原文**（十几份档案加起来几十 KB，挑人一个字都用不上）。
+- `line` 是档案绑的配置集；空串 = 通用（哪条线都能用）。
+- `blockChars = 0` = 这份档案没有形象块（选了也只会挂 LoRA），面板会标注。
+
+### `GET {base}/catalog?line=<配置集>&q=<关键词>&limit=<n>`
+
+```json
+{
+  "ok": true,
+  "line": "moss-anime",
+  "query": "hu tao",
+  "total": 3,
+  "entries": [{ "name": "hu tao (genshin impact)", "copyright": "genshin impact", "kind": "character" }]
+}
+```
+
+- 动漫线的映射**映射的不是档案，而是表里的角色名**（`hu tao (genshin impact)`），
+  所以必须能按关键词把表搜出来；`copy_prompt` 不出网（出图时 DSH 按名字再查一次）。
+- `line` 不传 = 用默认配置集；那条线没配 `catalogFile` → **400** + 一句人话
+  （「这条线只能选档案，不能映射动漫角色名」），面板原样展示。
+
 ## 5. 错误码
 
 | code | HTTP | 含义 / 柏宝绘侧处置 |
@@ -224,6 +263,29 @@
 - 占位由柏宝绘的托管正则换成空锚点，**永不进 DOM、永不进提示词**。
 - 世界书条目正文见柏宝绘仓库 `src/autoTag/dshPlaceholder.ts` 的 `DSH_WORLDBOOK_ENTRY`；
   `docs/worldbook/01-柏宝绘-DSH画面占位.json` 的 uid 1 与它逐字相同（单测锁着）。
+
+### 7.1 档案映射（名字 → DSH 档案 / 动漫角色）
+
+占位里的名字是**这本书里的人**（林夏），DSH 的档案是**插件那侧的角色**（`26-小静`），两边不必同名。
+柏宝绘面板的「渠道 → DSH 写手 → 档案映射」把两者对上：
+
+| 面板列 | 写什么 | 存成 |
+|---|---|---|
+| 名字 | 占位「人物名称：」里那一行写的那串，**一字不差** | `charMappings[].name` |
+| 映射到 | 从 `GET /identities` 的档案 / `GET /catalog` 的动漫角色里选一项 | `kind`（`archive` / `catalog`）+ `ref` + `line` |
+
+出图时的机械规则（`state/dshCharMap.ts` 的 `planDshCharacters`，纯函数）：
+
+1. 只有名字**字面出现在这一条的占位里**才发（映射不是「每单都注入」）；长名优先（「雪」不会吃掉「小雪」）；
+   命中项按首次出现位置排序 —— **第一位站主角位**（与阅读器同一口径）。
+2. 命中的写进 `characters: ['林夏：26-小静']`；**同一个人不再进 `roles`**（两套长相会打架）。
+3. `line` 不符的映射**不发**：`archive` 要求「同线或通用（`line` 留空）」，`catalog` 要求线与当前
+   配置集完全一致（每条线查各自的表）。DSH 的 `lineGate` 默认 `strict`，跨线会让**整单报错**，
+   所以柏宝绘先自己滤掉，并在出图前弹一句提醒（静默跳过只会留下「这张脸不对」）。
+4. 没被映射的人照旧走 `roles`（柏宝绘角色库的块）。两路并存见 §3.1 的合并规则。
+
+> 为什么映射只存 id 与线、不存外貌：长相的真源在 DSH 的档案里。DSH 改了 `char_block` / LoRA，
+> 下一单自动跟着变 —— 柏宝绘存一份快照就等于让同一件事有两个真源。
 
 ## 8. 写手与请求历史（DSH 侧内部细节，不是协议字段）
 

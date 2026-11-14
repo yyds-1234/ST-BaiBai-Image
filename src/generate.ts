@@ -84,6 +84,13 @@ export interface GenerateInput {
    */
   dshRoles?: { name: string; charBlock: string }[];
   /**
+   * 占位里的人名 → DSH 档案（或动漫表角色名），每项 `名字：引用`（协议 §3.1）。
+   *
+   * 由「档案映射」算出来（见 state/dshCharMap 的 planDshCharacters）：映射命中的人走这条
+   * 通道，DSH 去自己的 identities/ 查形象块、挂 LoRA、过 line 门禁；没命中的仍走 dshRoles。
+   */
+  dshCharacters?: string[];
+  /**
    * 占位里点名了、但角色库里**没有外貌可写**的角色名。
    *
    * 纯诊断字段：不进请求、不进提示词，只供卡片弹一条提醒。理由见 state/charTags 的
@@ -338,8 +345,9 @@ export async function generateImage(
         conn,
         {
           scene,
-          // 角色块走旁路字段 roles：DSH 收到块就直接拼进正向，不查它自己的档案。
-          // 空清单整个字段不发（发了等于声明「这批角色没长相」）。
+          // 两条角色通道并行（协议 §3.1）：映射过的人按名字去 DSH 档案里查（能用 LoRA / line 门禁），
+          // 没映射的人由柏宝绘把自己的块交过去。空清单整个字段不发 —— 发了等于声明「这批角色没长相」。
+          characters: input.dshCharacters?.length ? input.dshCharacters : undefined,
           roles: input.dshRoles?.length ? input.dshRoles : undefined,
           size,
           negative: input.negative,
