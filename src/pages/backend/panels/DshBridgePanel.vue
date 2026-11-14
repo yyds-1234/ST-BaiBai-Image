@@ -479,7 +479,7 @@ async function probeCast(): Promise<void> {
 
       <Collapsible title="自动认角色" :open="false">
         <p class="bbi-field-hint">
-          这一单<b>没有映射命中</b>时（占位里叫得出名字、但你没配映射、角色库里也没有块），
+          每一单，<b>没给英文对照</b>的人（占位里叫得出名字、但你没配映射、角色库里也没有块）都会被认一遍——已给英文对照的人不重复认（逐人补认），
           要不要让 DSH 自己从占位正文里认人：
           <b>档案名 / 别名</b>（如「瑶瑶」→ 26-小静）与<b>动漫角色</b>（只在查动漫表的线上，如 moss-anime）。
         </p>

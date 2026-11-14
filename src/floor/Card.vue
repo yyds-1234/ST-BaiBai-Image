@@ -333,7 +333,7 @@ async function generate(): Promise<void> {
     dsh: props.dsh,
     dshCharacters: dshPlan.characters,
     dshRoles: dshPlan.roles,
-    // 自动认角色（协议 §3.1，桥接 2.14.0）：这一单没映射命中时，让 DSH 自己从占位正文里认人。
+    // 自动认角色（协议 §3.1，桥接 2.14.0）：这一单里没映射命中的人，让 DSH 自己从占位正文里认人。
     // 恒发布尔 —— 面板上的开关说了算；不发就等于「按 DSH 配置走」，关掉就再也关不掉了。
     dshAutoCast: settings.dshBridge.autoCast,
     // 占位里叫得出名字、但角色库里没给他写外貌的那些人。DSH 会照常出图（零个角色），
