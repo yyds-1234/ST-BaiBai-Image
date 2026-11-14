@@ -200,6 +200,49 @@ describe('generateImage: dsh 分支', () => {
     expect(body.roles).toEqual([{ name: '许梨', charBlock: '1girl, silver hair' }]);
   });
 
+  it('自动认角色开关随请求发（协议 §3.1，2.14.0）：关掉也要发 false', async () => {
+    dshReady({ autoCast: false });
+    acceptThenDone();
+    await generateImage({ prompt: '', dsh: '傍晚的天台，她靠着栏杆回头', size: 'portrait', seed: 3, dshAutoCast: false });
+    const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
+    // 不发 = 按 DSH 配置走（默认 smart）。用户关掉却仍被认人，是最难解释的一种行为。
+    expect(body.autoCast).toBe(false);
+  });
+
+  it('DSH 回包里的自动认角色结果冒到 output（卡片据此说「这人是谁认出来的」）', async () => {
+    dshReady();
+    acceptThenDone({
+      ok: true,
+      status: 'done',
+      result: {
+        prompt: 'hu tao from genshin impact',
+        scene: '胡桃在屋檐下回头',
+        characters: [],
+        characterSource: 'none',
+        catalogCharacters: ['胡桃：hu tao (genshin impact)'],
+        autoCast: {
+          source: 'smart',
+          characters: ['胡桃：hu tao (genshin impact)'],
+          notes: ['自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)'],
+        },
+        images: [{ base64: 'AAAA', mediaType: 'image/png', width: 832, height: 1216 }],
+      },
+    });
+    const output = await generateImage({ prompt: '', dsh: '胡桃在屋檐下回头', size: 'portrait', seed: 4 });
+    expect(output.dshAutoCast).toEqual({
+      source: 'smart',
+      characters: ['胡桃：hu tao (genshin impact)'],
+      notes: ['自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)'],
+    });
+  });
+
+  it('DSH 没认到人时 output 上不出现 dshAutoCast（不留一个空壳字段）', async () => {
+    dshReady();
+    acceptThenDone();
+    const output = await generateImage({ prompt: '', dsh: '她站在窗边', size: 'portrait', seed: 5 });
+    expect(output.dshAutoCast).toBeUndefined();
+  });
+
   it('characters 的空清单同样不发（发 [] 等于声明「这单没有要查档案的人」）', async () => {
     dshReady();
     acceptThenDone();

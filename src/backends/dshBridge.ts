@@ -50,6 +50,11 @@ export interface DshHealth {
   defaultConfigSet: string;
   /** 查动漫表的线(frontmatter 有 catalogFile 的):这些线上「选角色」选的是表里的角色名,不是档案 id。 */
   catalogLines: string[];
+  /**
+   * DSH 侧「自动认角色」的默认档位(协议 §2,桥接 2.14.0):`off` / `mechanical` / `smart`。
+   * 老插件没有这个字段 → 空串(= 不支持,发 `autoCast` 也只当没看见)。
+   */
+  autoCast: string;
   /** 场景串长度上限(协议 §3.1 说请求上限是它的两倍)。 */
   promptMaxChars: number;
 }
@@ -131,6 +136,40 @@ export interface DshImageResult extends ComfyImageResult {
   /** 实际出图像素;DSH 没回报时为 0。 */
   width: number;
   height: number;
+  /**
+   * 自动认角色的账（协议 §4，桥接 2.14.0）：这一单 DSH 自己从正文里认出了谁。
+   * 没认到（或调用方点名了角色 / 关掉了）就不出现。
+   */
+  autoCast?: DshAutoCast;
+  /**
+   * 动漫表命中的人（`显示名：动漫表角色名`）。它们没有档案，所以 `characters` 里看不到，
+   * 但 `copy_prompt` 是真的原样注入进去了 —— 分开报才知道「这张图里的动漫角色是谁」。
+   */
+  catalogCharacters: string[];
+}
+
+/** DSH 自动认角色的结果形状（协议 §4 的 `result.autoCast`）。 */
+export interface DshAutoCast {
+  /** `mechanical` = 只按档案 / 别名 / 表里字面名认；`smart` = 还问过模型（名字经机械核对）。 */
+  source: string;
+  /** `显示名：引用`（档案 id 或动漫表角色名），与 `characters` 同形。 */
+  characters: string[];
+  /** 每一步的说明：谁、认成哪一条、哪条因为歧义被跳过。 */
+  notes: string[];
+}
+
+/** `POST /cast/detect` 的结果（协议 §4.6）：只认人，不出图、不写串。 */
+export interface DshCastDetectResult {
+  /** 这次按哪条线认的（配置集 id）。 */
+  line: string;
+  /** `off` / `mechanical` / `smart`。 */
+  mode: string;
+  /** `none` / `mechanical` / `smart`。 */
+  source: string;
+  characters: string[];
+  notes: string[];
+  /** 这条线有没有动漫表：false = 只可能认档案（面板据此换提示文案）。 */
+  catalog: boolean;
 }
 
 /** 轮询进度(卡片用它换阶段文案;不关心就整个不传)。 */
@@ -186,6 +225,14 @@ export interface DshGenerateValues {
    * 不查 LoRA、不过 line 门禁。柏宝绘在「这单没有任何档案映射命中」时走这条。
    */
   roles?: DshRole[];
+  /**
+   * 自动认角色（协议 §3.1，桥接 2.14.0）：这一单没点名角色时，让 DSH 自己从 `scene` 里认人。
+   *
+   * 与 `characters` 的分工：`characters` 是「用户说这是谁」，`autoCast` 是「DSH 自己看正文认」——
+   * 两者同时给时**点名优先**（DSH 侧 `autoCastPlan()` 直接把自动认关掉），不会出现两套答案。
+   * 不传 = 按 DSH 侧 `bridge.autoCast` 的配置（默认 smart）。
+   */
+  autoCast?: boolean;
   size: Orientation;
   /** 追加负向串;DSH 侧与配置集 negativeHint 合并,不替换。 */
   negative?: string;
@@ -353,6 +400,8 @@ export async function probeDshBridge(conn: DshBridgeConn, signal?: AbortSignal):
     catalogLines: Array.isArray(body.catalogLines)
       ? body.catalogLines.filter((x): x is string => typeof x === 'string')
       : [],
+    // 自动认角色的默认档位（2.14.0）。老插件没有这个字段 → 空串，面板据此提示「升级才有」。
+    autoCast: typeof body.autoCast === 'string' ? body.autoCast : '',
     promptMaxChars:
       typeof body.promptMaxChars === 'number' && Number.isFinite(body.promptMaxChars)
         ? body.promptMaxChars
@@ -466,6 +515,80 @@ export async function searchDshCatalog(
 }
 
 /**
+ * 试跑「自动认角色」（`POST /cast/detect`，桥接 2.14.0）：给一段正文，回 DSH 会认成谁。
+ *
+ * 为什么值得单独一条调用：平时认人藏在 `/generate` 里，要等一整张图（40～90s）才知道它认成了谁，
+ * 认错了才发现已经浪费了一张。面板里点一下就能看清「机械层认到谁、模型层又补了谁」，
+ * 要改映射、要关开关当场就能定。
+ *
+ * 它**不出图**，但动漫线上会走一趟 DSH 的识别模型（几秒），所以超时给 30s 而不是选择器的 15s。
+ */
+export async function detectDshCast(
+  conn: DshBridgeConn,
+  values: { scene: string; configSet?: string; autoCast?: boolean },
+  signal?: AbortSignal,
+): Promise<DshCastDetectResult> {
+  const scene = (values.scene ?? '').trim();
+  if (!scene) throw dshError('BAD_REQUEST', '先给一段正文 —— 就是出图时交给 DSH 的那段画面描述');
+  const body = await postShortJson(conn, 'cast/detect', {
+    scene,
+    ...values.configSet?.trim() ? { configSet: values.configSet.trim() } : {},
+    ...values.autoCast === undefined ? {} : { autoCast: values.autoCast },
+  }, signal);
+  return {
+    line: typeof body.line === 'string' ? body.line : '',
+    mode: typeof body.mode === 'string' ? body.mode : '',
+    source: typeof body.source === 'string' ? body.source : 'none',
+    characters: Array.isArray(body.characters)
+      ? body.characters.filter((x): x is string => typeof x === 'string' && !!x.trim())
+      : [],
+    notes: Array.isArray(body.notes)
+      ? body.notes.filter((x): x is string => typeof x === 'string' && !!x.trim())
+      : [],
+    catalog: body.catalog === true,
+  };
+}
+
+/**
+ * 「人在面板上等」的 POST（`/cast/detect`）：短超时 + 与选择器同一套翻错口径。
+ * 与 `getSelectorJson` 的区别只有方法与超时上限（那边 15s 足够，这边要等一趟模型）。
+ */
+async function postShortJson(
+  conn: DshBridgeConn,
+  path: string,
+  payload: unknown,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  if (!conn.url.trim()) throw dshError('BAD_REQUEST', '请先填写 DSH 桥接地址');
+  const timeout = Math.min(conn.timeoutMs || 180000, 30000);
+  const linked = linkSignals(timeout, signal);
+  let response: Response;
+  try {
+    response = await fetch(endpoint(conn.url, path), {
+      method: 'POST',
+      headers: headers(conn),
+      body: JSON.stringify(payload),
+      signal: linked.signal,
+    });
+  } catch (error) {
+    const why = linked.reason();
+    if (why === 'abort') throw error;
+    throw dshError(TIMEOUT_CODE, `请求 DSH 超时（${Math.round(timeout / 1000)}s）：${conn.url.trim()}`);
+  }
+  linked.reason();
+  // 404 只可能是「对面那版插件没这条路由」（路由表是写死的）。
+  if (response.status === 404) {
+    throw dshError(
+      'BAD_REQUEST',
+      'DSH 侧没有这条路由（/cast/detect 要 dsh-story-image 2.14.0+）：先把插件升级到新版，再回来试',
+    );
+  }
+  const body = (await readJson(response)) as Record<string, unknown> | null;
+  if (!response.ok || !body || body.ok === false) throw failureFrom(response.status, body);
+  return body;
+}
+
+/**
  * 出图（协议 v2：**入队 + 轮询**）。返回的 ComfyImageResult.url 是 dataURL —— 落盘链路直接认它。
  *
  * 为什么不是一次长连接：柏宝绘常装在另一台机器上，中间可能夹一层反向代理/中继，
@@ -496,6 +619,9 @@ export async function generateDshImage(
   // DSH 会把映射过的人按档案解析、其余人用块，见协议 §3.1。
   if (values.characters?.length) payload.characters = values.characters.filter(text => text.trim());
   if (values.roles?.length) payload.roles = values.roles;
+  // 自动认角色（2.14.0）：布尔三态才发 —— `false`（这一单别认）与「没填」（按 DSH 配置走）是两件事。
+  // 老插件忽略未知字段，所以对新旧两边都安全。
+  if (values.autoCast !== undefined) payload.autoCast = values.autoCast;
   if (conn.configSet?.trim()) payload.configSet = conn.configSet.trim();
   if (values.negative?.trim()) payload.negative = values.negative.trim();
   if (conn.count > 0) payload.count = Math.min(8, Math.max(1, Math.floor(conn.count)));
@@ -623,6 +749,28 @@ function toImageResult(result: Record<string, unknown> | undefined, jobId: strin
     requestId: typeof result?.requestId === 'string' ? result.requestId : '',
     width: typeof first?.width === 'number' ? first.width : 0,
     height: typeof first?.height === 'number' ? first.height : 0,
+    // 自动认角色 + 动漫表命中的账（2.14.0）。老插件没有这两块 → 空，调用方据空/非空决定要不要提示。
+    ...autoCastOf(result?.autoCast) === undefined ? {} : { autoCast: autoCastOf(result?.autoCast)! },
+    catalogCharacters: Array.isArray(result?.catalogCharacters)
+      ? result.catalogCharacters.filter((x): x is string => typeof x === 'string' && !!x.trim())
+      : [],
+  };
+}
+
+/** 归一 `result.autoCast`：形状不对就当没有（一份坏账不该让整张图的回包失败）。 */
+function autoCastOf(raw: unknown): DshAutoCast | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const item = raw as Record<string, unknown>;
+  const characters = Array.isArray(item.characters)
+    ? item.characters.filter((x): x is string => typeof x === 'string' && !!x.trim())
+    : [];
+  if (characters.length === 0) return undefined;
+  return {
+    source: typeof item.source === 'string' ? item.source : '',
+    characters,
+    notes: Array.isArray(item.notes)
+      ? item.notes.filter((x): x is string => typeof x === 'string' && !!x.trim())
+      : [],
   };
 }
 

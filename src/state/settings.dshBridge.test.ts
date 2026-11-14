@@ -57,6 +57,9 @@ describe('老配置升级', () => {
       configSet: '',
       count: 1,
       charMappings: [],
+      // 自动认角色默认开：与 DSH 侧 bridge.autoCast 的默认值（smart）对齐 ——
+      // 两边默认必须是同一个答案，否则「升级完什么都没变」与「升级完突然多两个人」都会发生。
+      autoCast: true,
     });
   });
 
@@ -102,6 +105,9 @@ describe('dshBridge 逐字段兜底', () => {
         configSet: 'anime-ob',
         count: 3,
         charMappings: [{ name: '林夏', kind: 'archive', ref: '26-小静', line: 'moss-real' }],
+        // 关掉的开关必须留住：它决定「没配映射的人要不要 DSH 自己认」，被默认值顶回 true
+        // 会让用户在面板上关掉、刷新又自己打开。
+        autoCast: false,
       },
     });
     expect(settings.dshBridge).toEqual({
@@ -111,6 +117,7 @@ describe('dshBridge 逐字段兜底', () => {
       configSet: 'anime-ob',
       count: 3,
       charMappings: [{ name: '林夏', kind: 'archive', ref: '26-小静', line: 'moss-real' }],
+      autoCast: false,
     });
   });
 
@@ -157,6 +164,8 @@ describe('dshBridge 逐字段兜底', () => {
         timeoutMs: 'long',
         configSet: 9,
         count: {},
+        // 非布尔一律当「没填」→ 默认开（只有明确存过 false 才算关）。
+        autoCast: 'yes',
       },
     });
     expect(settings.dshBridge).toEqual({
@@ -166,6 +175,7 @@ describe('dshBridge 逐字段兜底', () => {
       configSet: '',
       count: 1,
       charMappings: [],
+      autoCast: true,
     });
   });
 

@@ -2,9 +2,11 @@
 import { DSH_WORLDBOOK_ENTRY, DSH_WORLDBOOK_TITLE } from '@/autoTag/dshPlaceholder';
 import {
   DSH_PROTOCOL_VERSION,
+  detectDshCast,
   listDshIdentities,
   probeDshBridge,
   searchDshCatalog,
+  type DshCastDetectResult,
   type DshCatalogEntry,
   type DshHealth,
   type DshIdentitySummary,
@@ -240,6 +242,39 @@ async function searchCatalog(): Promise<void> {
     mappingBusy.value = false;
   }
 }
+// ── 自动认角色（桥接 2.14.0）────────────────────────────────────────────────
+//
+// 平时这一步藏在 `/generate` 里（DSH 出图前自己认），要等一整张图才知道它认成了谁。
+// 面板里给一个「试跑」入口：调 `POST /cast/detect`（**不出图**），当场看清机械层认到谁、
+// 模型层又补了谁；认错了可以立刻改映射，或者把开关关掉 —— 不必先浪费一张图。
+
+/** 试跑用的正文（用户从占位里复制一段贴进来）。 */
+const castProbe = ref('');
+const castBusy = ref(false);
+const castResult = ref<DshCastDetectResult | null>(null);
+const castError = ref('');
+
+async function probeCast(): Promise<void> {
+  const scene = castProbe.value.trim();
+  if (scene.length === 0 || castBusy.value) return;
+  castBusy.value = true;
+  castError.value = '';
+  castResult.value = null;
+  try {
+    // 配置集与出图同一个口径（effectiveDshBridge 已把留空收口成 moss-real）：
+    // 试跑看到的线必须就是出图那条线，否则「试跑认到了、出图没有」根本无从解释。
+    const conn = effectiveDshBridge();
+    castResult.value = await detectDshCast(conn, {
+      scene,
+      configSet: conn.configSet,
+      autoCast: settings.dshBridge.autoCast,
+    });
+  } catch (error) {
+    castError.value = errorMessage(error);
+  } finally {
+    castBusy.value = false;
+  }
+}
 
 </script>
 <template>
@@ -433,6 +468,64 @@ async function searchCatalog(): Promise<void> {
         <p v-else class="bbi-field-hint">还没有映射行：先「拉取档案清单」，再「添加一行」。</p>
       </Collapsible>
 
+      <Collapsible title="自动认角色" :open="false">
+        <p class="bbi-field-hint">
+          这一单<b>没有映射命中</b>时（占位里叫得出名字、但你没配映射、角色库里也没有块），
+          要不要让 DSH 自己从占位正文里认人：
+          <b>档案名 / 别名</b>（如「瑶瑶」→ 26-小静）与<b>动漫角色</b>（只在查动漫表的线上，如 moss-anime）。
+        </p>
+        <p class="bbi-field-hint">
+          动漫线那一路是「模型先报名字，再由动漫表核对」：名字必须在正文里<b>逐字出现</b>，
+          罗马字必须在表里<b>查得到</b>，两关都过才注入 —— 认不出来就什么都不加，不会瞎猜一个人。
+          关掉之后，没配过的人只有「模型随机长相」这一种结果。
+        </p>
+
+        <label class="dsh-auto-row">
+          <input v-model="settings.dshBridge.autoCast" type="checkbox" class="bbi-checkbox" />
+          <span>开：没映射的人也交给 DSH 认（推荐）</span>
+        </label>
+
+        <div class="bbi-field">
+          <div class="bbi-field-head">
+            <span class="bbi-field-label">试跑（不出图）</span>
+          </div>
+          <textarea
+            v-model="castProbe"
+            class="bbi-input dsh-auto-input"
+            rows="3"
+            spellcheck="false"
+            placeholder="贴一段占位正文，看 DSH 会认成谁。例如：人物名称：胡桃 / 人物服装：黑色长外套 / 场景描述：雨夜的屋檐下，她回头笑"
+          />
+          <div class="conn-actions">
+            <button
+              class="bbi-btn"
+              type="button"
+              :disabled="castBusy || !castProbe.trim()"
+              @click="probeCast"
+            >
+              <Icon name="plug" />
+              {{ castBusy ? '识别中…' : '试跑自动认角色' }}
+            </button>
+          </div>
+          <p v-if="castError" class="bbi-field-hint dsh-auto-err">{{ castError }}</p>
+          <div v-else-if="castResult" class="dsh-auto-result">
+            <p class="bbi-field-hint">
+              线 {{ castResult.line }} · 档位 {{ castResult.mode }} · 来源 {{ castResult.source }}
+              · {{ castResult.catalog ? '这条线查动漫表' : '这条线只认档案' }}
+            </p>
+            <p v-if="castResult.characters.length" class="bbi-field-hint">
+              认出来的人：<b>{{ castResult.characters.join('、') }}</b>
+            </p>
+            <p v-else class="bbi-field-hint">
+              没认出来：正文里没有档案名 / 别名，动漫表也没对上（这时出图照常，长相由写手从正文里写）。
+            </p>
+            <ul v-if="castResult.notes.length" class="dsh-auto-notes">
+              <li v-for="(note, index) in castResult.notes" :key="index">{{ note }}</li>
+            </ul>
+          </div>
+        </div>
+      </Collapsible>
+
       <Collapsible title="写入方式（占位）" :open="false">
         <p class="bbi-field-hint">
           这条渠道不靠柏宝绘自动生成 tag。主模型在写正文时按下面的格式在回复末尾追加一个占位，
@@ -524,5 +617,32 @@ async function searchCatalog(): Promise<void> {
 }
 .dsh-map-search > * {
   min-width: 0;
+}
+
+/* 自动认角色的开关行：复选框 + 一句人话。用 label 包住，点字也能勾上。 */
+.dsh-auto-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.dsh-auto-input {
+  width: 100%;
+  resize: vertical;
+  margin-bottom: 8px;
+}
+.dsh-auto-err {
+  color: var(--bbi-danger, #d9534f);
+}
+/* 试跑结果：notes 是逐条说明（认成谁、哪条因为歧义跳过），用小字号列表读着最省地方。 */
+.dsh-auto-notes {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--bbi-label-secondary, rgba(127, 127, 127, 0.95));
 }
 </style>

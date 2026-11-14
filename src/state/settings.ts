@@ -160,6 +160,15 @@ export interface DshBridgeSettings extends DshBridgeConn {
    * 因此这里只有 id 与线，没有外貌文本。
    */
   charMappings: DshCharMapping[];
+  /**
+   * 自动认角色（桥接 2.14.0）：这一单**没有映射命中、也没有角色库块**时，
+   * 让 DSH 自己从占位正文里认人（档案名 / 别名，动漫线上还会让模型报名字再由动漫表核对）。
+   *
+   * 【为什么值得一个开关】关掉之后，没配过映射的人就只有「模型随机长相」这一种结果 ——
+   * 有些用户就是要这个（AI 原创角色、不想被认成某个已有角色）。开着时也只认**正文里
+   * 字面出现的名字**，不会凭空加人。
+   */
+  autoCast: boolean;
 }
 
 /**
@@ -1601,6 +1610,10 @@ function dshBridgeDefaults(): DshBridgeSettings {
     count: 1,
     // 空表 = 一个都不映射:所有角色仍走柏宝绘角色库(与升级前逐字一致)。
     charMappings: [],
+    // 默认开:占位里叫得出名字、却没配映射的人,让 DSH 按它自己的档案 / 动漫表去认。
+    // 与 DSH 侧 bridge.autoCast 的默认值(smart)一致 —— 两边默认就得是同一个答案,
+    // 否则「升级完却什么都没变」与「升级完突然冒出两个人」都会发生。
+    autoCast: true,
   };
 }
 
@@ -1971,6 +1984,8 @@ function normalizeDshBridge(raw: unknown, def: DshBridgeSettings): DshBridgeSett
     // 映射表整个走 dshCharMap 的清洗:空行 / 只填一半 / 同名两处都在那里处理,
     // 面板写入与 hydrate 共用同一套规则(否则面板能存进一个 hydrate 会丢的形态)。
     charMappings: normalizeDshCharMappings(o.charMappings),
+    // 只有明确存成 false 才是关:老配置没有这个键(= undefined),进来就是开。
+    autoCast: o.autoCast !== false,
   };
 }
 

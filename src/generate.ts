@@ -91,6 +91,13 @@ export interface GenerateInput {
    */
   dshCharacters?: string[];
   /**
+   * 自动认角色（DSH 渠道，协议 §3.1）：这一单没映射命中、也没有角色库块时，
+   * 让 DSH 从占位正文里自己认人（档案名/别名；动漫线上还会问一遍模型再由动漫表核对）。
+   *
+   * 不传 = 用 DSH 侧配置的默认值；柏宝绘这边恒发布尔（面板上的开关说了算）。
+   */
+  dshAutoCast?: boolean;
+  /**
    * 占位里点名了、但角色库里**没有外貌可写**的角色名。
    *
    * 纯诊断字段：不进请求、不进提示词，只供卡片弹一条提醒。理由见 state/charTags 的
@@ -158,6 +165,13 @@ export interface GenerateOutput {
    * NAI 的画师串与 vibe 不在 tag 文本里，不在这里冒泡出去就只能永久丢失。
    */
   meta: GenerationMeta;
+  /**
+   * DSH 自动认角色的结果（只有 DSH 渠道、且真认到人才有）。
+   *
+   * 卡片用它弹一句「这张图里的人是谁认出来的」—— 图注那行只放得下配置集/seed，
+   * 而「没配映射却出现了正确长相」这件事必须有出处，否则用户查不到是谁决定的。
+   */
+  dshAutoCast?: { source: string; characters: string[]; notes: string[] };
 }
 
 /**
@@ -327,6 +341,8 @@ export async function generateImage(
     // 差一个字段,历史里记的就不是真正发出去的东西了。
     let finalPrompt = '';
     let finalNegative = '';
+    // DSH 自动认角色的结果：只有 DSH 那条分支会填，其它后端恒空（返回时按 undefined 处理）。
+    let dshAutoCast: { source: string; characters: string[]; notes: string[] } | undefined;
     if (isDsh) {
       // DSH 写手:柏宝绘不拼提示词,只把画面散文原样送过去。故这里**没有** onPrompt 预览
       // ——成品串是 DSH 写出来的,发请求前根本不存在,硬编一个假的只会让历史记错。
@@ -349,6 +365,8 @@ export async function generateImage(
           // 没映射的人由柏宝绘把自己的块交过去。空清单整个字段不发 —— 发了等于声明「这批角色没长相」。
           characters: input.dshCharacters?.length ? input.dshCharacters : undefined,
           roles: input.dshRoles?.length ? input.dshRoles : undefined,
+          // 自动认角色：恒发布尔（面板开关说了算），不传反而会让「关掉」变成「按 DSH 配置走」。
+          autoCast: input.dshAutoCast,
           size,
           negative: input.negative,
           seed: input.seed,
@@ -369,6 +387,7 @@ export async function generateImage(
         },
       );
       result = output;
+      dshAutoCast = output.autoCast;
       // DSH 回了成品串就用它(那是「这次究竟发了什么」的唯一真相);没回就记散文本身,
       // 至少比一个空串更能说明这张图画的是什么。
       finalPrompt = output.prompt.trim() || scene;
@@ -462,6 +481,7 @@ export async function generateImage(
       finalPrompt,
       finalNegative,
       meta,
+      ...dshAutoCast === undefined ? {} : { dshAutoCast },
     };
   } finally {
     release?.();

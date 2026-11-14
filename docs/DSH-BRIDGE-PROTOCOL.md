@@ -46,8 +46,9 @@
   "configSets": ["moss-real", "moss-anime"],
   "defaultConfigSet": "moss-real",
   "catalogLines": ["moss-anime"],
+  "autoCast": "smart",
   "promptMaxChars": 4000,
-  "bridge": { "version": "2.13.0", "concurrency": 2, "active": 0, "queued": 0, "tokenRequired": false }
+  "bridge": { "version": "2.14.0", "concurrency": 2, "active": 0, "queued": 0, "tokenRequired": false }
 }
 ```
 
@@ -56,6 +57,9 @@
 - `llm.mode`：`'session'`（v2，写串走真实会话）｜`'direct'`（v1 兼容，直连补全）。
 - `catalogLines`：**查动漫表的线**（配置集 frontmatter 有 `catalogFile` 的）。面板用它说清
   「哪条线能映射动漫角色」；老插件没有这个字段 → 柏宝绘按空数组处理（= 哪条线都不查表）。
+- `autoCast`（**2.14.0**）：DSH 侧「自动认角色」的默认档位 —— `off` / `mechanical`（只认档案）/
+  `smart`（还会让模型报名字，再由动漫表核对）。老插件没有这个字段 → 空串，面板据此提示「升级才有」。
+  它只是**默认值**：请求里给 `autoCast: false` 可以单次关掉（见 §3.1）。
 
 ## 3. `POST {base}/generate` —— 只入队
 
@@ -66,6 +70,7 @@
 | `scene` | string | 是 | **画面占位原文**：v2.0 的三行中文（人物名称 / 人物服装 / 场景描述）；旧版一段散文照样收。上限 `promptMaxChars × 2`。 |
 | `roles` | `{name,charBlock}[]` | 否 | 角色块旁路：DSH 不查档案、不过 line 门禁、不套用 LoRA / 风格档，`charBlock` 交给写手并拼进正向（第一个站主角位）。`charBlock` **两种写法都合法**：一句连贯英文描述（推荐，贴散文流底模）或一串 danbooru 短 tag；DSH 不判别、不转换。柏宝绘用它送**没做档案映射**的人。 |
 | `characters` | string[] | 否 | 名字数组，走 DSH 自己的档案：拿名字去 identities/*.md 认人、挂 LoRA、过 line 门禁。每项可写 `显示名：引用`（冒号前是写手与回执看到的名字，冒号后是去档案查的 id / 动漫表角色名）；不带冒号时整串当引用。柏宝绘用它送**档案映射命中**的人。 |
+| `autoCast` | boolean | 否 | **自动认角色**（2.14.0）：没点名角色时，让 DSH 自己从 `scene` 里认人（档案名 / 别名；动漫线上还会让模型报名字，再由动漫表核对）。不传 = 按 DSH 的 `bridge.autoCast`（默认 `smart`）；`false` = 这一单别认。**点名优先**：`characters` 非空时自动认必定关闭（用户说了是谁，就不该有第二套答案）。 |
 | `size` | `'portrait'` \| `'landscape'` | 否 | 默认 `portrait`。DSH 会按它摆正宽高（对调，像素总数不变）。 |
 | `configSet` | string | 否 | 配置集 id。柏宝绘把空串收口成 **`moss-real`**（moss 真人线）再发，与阅读器发配置集同字段；DSH 侧仍按原语义「留空用默认集」。 |
 | `negative` | string | 否 | 追加负向串；与配置集 `negativeHint` **合并**，不替换。 |
@@ -143,6 +148,12 @@
     "scene": "（写手产出的 scene 串，未经拼层）",
     "configSet": "moss-real", "line": "moss",
     "characters": ["linxia"], "characterSource": "auto",
+    "catalogCharacters": ["胡桃：hu tao (genshin impact)"],
+    "autoCast": {
+      "source": "smart",
+      "characters": ["胡桃：hu tao (genshin impact)"],
+      "notes": ["自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)"]
+    },
     "lint": { "warns": [], "infos": [], "skipped": null },
     "images": [{ "base64": "iVBOR...", "mediaType": "image/png", "width": 912, "height": 1216, "seed": 1234 }],
     "requestId": "sj-bcdecb6bc55e"
@@ -153,6 +164,11 @@
 - `images[].base64`：**纯 base64，不带 `data:` 前缀**。
 - `images` 为空数组 = 失败（`NO_IMAGE`），正常不会出现在 `done` 里。
 - `scene` 是写手（一次性补全）的原样产出，方便柏宝绘在卡片上展示「DSH 写了什么」。
+- `catalogCharacters`（2.14.0）：动漫表命中的人（`显示名：动漫表角色名`）。它们没有档案，
+  所以 `characters` 里看不到，但 `copy_prompt` 是真的原样注入了 —— 分开报才说得清「这张图里是谁」。
+- `autoCast`（2.14.0）：**这一单 DSH 自己认出了谁**。`source` 是 `mechanical`（只按档案 / 别名 /
+  表里字面名）或 `smart`（还问过模型，名字经机械核对）；`notes` 是逐条说明（认成哪一条、哪条因
+  歧义被跳过）。没认到人时整个字段不出现 —— 客户端据「有没有这个字段」决定要不要提示，不必判空数组。
 - `requestId` 与 `jobId` 相同：拿它去配置台 `/story-image-admin` 的「请求历史」页，
   就能看到这一次请求完整的上下文（写手 system、画面占位、出稿、路由、耗时、报错）。
   写串**不再建 DSH 会话**，所以侧栏里不会出现 bridge-writer-*。
@@ -195,6 +211,36 @@
   所以必须能按关键词把表搜出来；`copy_prompt` 不出网（出图时 DSH 按名字再查一次）。
 - `line` 不传 = 用默认配置集；那条线没配 `catalogFile` → **400** + 一句人话
   （「这条线只能选档案，不能映射动漫角色名」），面板原样展示。
+
+## 4.6 `POST {base}/cast/detect` —— 试跑自动认角色（不出图）
+
+给一段正文，回「这一单自动认角色会认出谁」。**不写串、不出图、不产生任务**，几秒内返回。
+
+```json
+POST { "scene": "芙宁娜坐在歌剧院高台上，胡桃靠在柱子旁打哈欠。", "configSet": "moss-anime", "autoCast": true }
+
+→ 200
+{
+  "ok": true,
+  "line": "moss-anime",
+  "mode": "smart",
+  "source": "smart",
+  "characters": ["芙宁娜：furina (genshin impact)", "胡桃：hu tao (genshin impact)"],
+  "notes": [
+    "自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)",
+    "自动认角色：模型认出正文里的「芙宁娜」→ 动漫表 furina (genshin impact)（名字在正文里核对过、表里也确有名）"
+  ],
+  "catalog": true
+}
+```
+
+- 入参：`scene`（必填）、`configSet`（也认 `line`）、`autoCast`（`false` / `true` / `'mechanical'`）。
+  不传 `autoCast` 就按 `bridge.autoCast`（默认 `smart`）；真人线一律降到 `mechanical`（没有表可查）。
+- `characters` 与 `/generate` 的 `characters` **同形**（`显示名：引用`）：客户端可以直接把它塞回请求。
+- `catalog` = 这条线有没有动漫表（`false` 表示只可能认档案）。
+- 为什么单开一条：平时认人藏在 `/generate` 里，要等一整张图（40～90s）才知道认成了谁；
+  面板的「试跑自动认角色」用它当场看清「机械层认到谁、模型层又补了谁」——认错了立刻改映射或关开关。
+- 动漫线上会走一趟识别模型（几秒）；那一趟失败只影响这次预览，理由进 DSH 日志，不影响出图。
 
 ## 5. 错误码
 
@@ -286,6 +332,36 @@
 
 > 为什么映射只存 id 与线、不存外貌：长相的真源在 DSH 的档案里。DSH 改了 `char_block` / LoRA，
 > 下一单自动跟着变 —— 柏宝绘存一份快照就等于让同一件事有两个真源。
+
+### 7.2 自动认角色（没配映射时 DSH 自己认，2.14.0）
+
+「映射」是**用户说**「这个人是 DSH 的谁」；「自动认角色」是**DSH 自己看**占位正文认。
+两者在同一单里互斥：只要 `characters` 非空（映射命中过），自动认必定关闭 —— 点名优先，
+否则同一张图会有两套答案。
+
+启用条件：请求没点名角色 + `autoCast` 不是 `false` + DSH 侧 `bridge.autoCast` 不是 `off`。
+总上限 **3 人**，三层按成本从低到高，前一层的收获会挤掉后一层的名额：
+
+| 层 | 认什么 | 判据 | 在哪些线生效 |
+|---|---|---|---|
+| ① 档案 | 正文里字面出现的档案名 / 别名（「瑶瑶」→ `26-小静`） | `detectIdentities`，只认**本线可用**且未被停用的档案 | 全部 |
+| ② 动漫表机械命中 | 中文别名表（`胡桃 → hu tao (genshin impact)`）+ 正文里的罗马字**多词**专名（`Hu Tao`） | `lookupCatalog` **精确命中**；同名多版本一律跳过并告警 | 只查动漫表的线 |
+| ③ 模型提议 | 让写手那台模型读一遍正文，报出正在场的角色名 | **两道机械校验**：名字必须逐字在正文里、罗马字必须在表里查得到；验不过就丢 | 只查动漫表的线 |
+
+纪律（为什么这么保守）：
+
+- **绝不猜**：同名多版本（`asuna (sao)` / `asuna (blue archive)`）不选；查不到的名字不硬塞 ——
+  塞错人比不塞更糟（画面会变成另一个人）。
+- **单词罗马字不进机械层**：表里就有 `rose` / `star` / `doctor` / `king`，英文正文里随便一句
+  "the rose in her hand" 都会被认成宝可梦的 Rose。单词专名交给模型那层（它看得懂语境，再由表核对）。
+- **调用方已给块的人不重复注入**（`roles` 的 `name` 会被挡掉）：同一个人两套长相会在串里打架。
+- 认出来的名字**走正常通道**（`characters`）：档案那批查形象块 / 挂 LoRA；动漫表那批查
+  `copy_prompt` 并**原样注入**（一字不改）。所以「自动认」不是第二条拼串路径，只是替用户填了一次
+  `characters` —— 出图结果与「用户自己映射了同样几个人」逐字一致。
+- 回执里单独报：`autoCast`（谁认出来的、机械还是模型）、`catalogCharacters`（哪些来自动漫表）、
+  以及 `warnings` 里的逐条说明（认成哪一条、哪条因歧义跳过）。
+- 关掉的两处：面板「渠道 → DSH 写手 → 自动认角色」（发 `autoCast: false`），
+  或 DSH 侧配置 `bridge.autoCast: 'off'`（影响所有调用方，包括阅读器）。
 
 ## 8. 写手与请求历史（DSH 侧内部细节，不是协议字段）
 

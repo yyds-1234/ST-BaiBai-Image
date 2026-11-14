@@ -333,6 +333,9 @@ async function generate(): Promise<void> {
     dsh: props.dsh,
     dshCharacters: dshPlan.characters,
     dshRoles: dshPlan.roles,
+    // 自动认角色（协议 §3.1，桥接 2.14.0）：这一单没映射命中时，让 DSH 自己从占位正文里认人。
+    // 恒发布尔 —— 面板上的开关说了算；不发就等于「按 DSH 配置走」，关掉就再也关不掉了。
+    dshAutoCast: settings.dshBridge.autoCast,
     // 占位里叫得出名字、但角色库里没给他写外貌的那些人。DSH 会照常出图（零个角色），
     // 图里这个人就成了没有设定的路人 —— 这件事自己不发声，故必须在这里捞出来告诉用户。
     dshRolesMissingAppearance: dshActive.value ? rolesWithoutAppearance(props.dsh) : [],
@@ -414,7 +417,7 @@ async function generate(): Promise<void> {
     );
     // 闸门、后端分派都在 generateImage 里(公开接口走同一条路,见 generate.ts);
     // 本组件只把进度回调接到自己的槽位运行态上。
-    const { result, meta, finalPrompt, finalNegative } = await generateImage({ ...job, seed }, signal, {
+    const { result, meta, finalPrompt, finalNegative, dshAutoCast } = await generateImage({ ...job, seed }, signal, {
       onStart: () => setGenPhase(slot, token, 'generating'),
       // 拼装完成即落账,**早于请求**:失败/被拦的请求也要能看清它本来要发什么。
       onPrompt: info => {
@@ -434,6 +437,17 @@ async function generate(): Promise<void> {
     // 落盘:图片进 ST 文件系统 + extra 写指针。成功后重水合,
     // 卡片从 extra 恢复为 ready(blob/dataURL 生命周期随之结束)。
     await saveImageResult(job.messageId, job.swipeId, job.seq, job.tag, seed, result, meta);
+    // 「这个人是谁认出来的」:没配档案映射、图里却有正确长相,出处只有这一句。
+    // 不说的话,症状永远是「脸对了但不知道是谁定的」/「脸不对也不知道能关哪儿」。
+    const autoCastNames = dshAutoCast?.characters ?? [];
+    if (autoCastNames.length) {
+      toastr.info(
+        `这张图里的人 DSH 自己认出来了：${autoCastNames.join('、')}`
+        + `（${dshAutoCast?.source === 'smart' ? '模型报名字 + 动漫表核对' : '按名字对上了档案 / 别名表'}）。`
+        + '原因：占位里叫得出名字、但没配档案映射。不想这样就在「渠道 → DSH 写手」里关掉「自动认角色」。',
+        '柏宝绘',
+      );
+    }
     result.revoke();
     // finalPrompt 已经通过 onPrompt 在请求前落账,这里再带一次是同源的幂等补录:
     // 万一 onPrompt 那条路径被 safeHistory 吞掉,成功路径仍能把全文补上。

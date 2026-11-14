@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { generateDshImage, listDshIdentities, probeDshBridge, searchDshCatalog, type DshBridgeConn } from '@/backends/dshBridge';
+import { detectDshCast, generateDshImage, listDshIdentities, probeDshBridge, searchDshCatalog, type DshBridgeConn } from '@/backends/dshBridge';
 
 /**
  * DSH 桥接后端的契约（见 docs/DSH-BRIDGE-PROTOCOL.md v2）：
@@ -336,6 +336,112 @@ describe('generateDshImage（协议 v2：入队 + 轮询）', () => {
   });
 });
 
+describe('autoCast（自动认角色，协议 §3.1 / 2.14.0）', () => {
+  it('开关原样发出去：false 也要发，不能被当成「没填」', async () => {
+    respondWith(accepted(), jsonResponse(200, doneResult()));
+    await generateDshImage(conn(), { ...VALUES, autoCast: false });
+    const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body)) as Record<string, unknown>;
+    // 不发 = 按 DSH 配置走（默认 smart）。用户关掉却仍被认人，是最难解释的一种行为。
+    expect(body.autoCast).toBe(false);
+  });
+
+  it('没填就不发（老插件收到未知字段没问题，但也别多发）', async () => {
+    respondWith(accepted(), jsonResponse(200, doneResult()));
+    await generateDshImage(conn(), VALUES);
+    const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body)) as Record<string, unknown>;
+    expect(body.autoCast).toBeUndefined();
+  });
+
+  it('回包里的 autoCast 与 catalogCharacters 折出来（谁认出来的、谁是动漫表来的）', async () => {
+    respondWith(accepted(), jsonResponse(200, doneResult({
+      characters: [],
+      characterSource: 'none',
+      catalogCharacters: ['胡桃：hu tao (genshin impact)'],
+      autoCast: {
+        source: 'smart',
+        characters: ['胡桃：hu tao (genshin impact)'],
+        notes: ['自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)'],
+      },
+    })));
+    const result = await generateDshImage(conn(), VALUES);
+    expect(result.autoCast).toEqual({
+      source: 'smart',
+      characters: ['胡桃：hu tao (genshin impact)'],
+      notes: ['自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)'],
+    });
+    expect(result.catalogCharacters).toEqual(['胡桃：hu tao (genshin impact)']);
+  });
+
+  it('autoCast 形状坏了当没有（一份坏账不该让整张图失败）', async () => {
+    respondWith(accepted(), jsonResponse(200, doneResult({
+      autoCast: { source: 'smart', characters: [], notes: 'oops' },
+      catalogCharacters: ['', '  '],
+    })));
+    const result = await generateDshImage(conn(), VALUES);
+    expect(result.autoCast).toBeUndefined();
+    expect(result.catalogCharacters).toEqual([]);
+  });
+});
+
+describe('detectDshCast（试跑自动认角色，POST /cast/detect）', () => {
+  it('POST 正文与线，把认出来的人与说明原样带回来', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      ok: true,
+      line: 'moss-anime',
+      mode: 'smart',
+      source: 'smart',
+      characters: ['胡桃：hu tao (genshin impact)'],
+      notes: ['自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)'],
+      catalog: true,
+    }));
+
+    const result = await detectDshCast(conn({ configSet: 'moss-anime' }), {
+      scene: '胡桃靠在柱子上打哈欠。',
+      configSet: 'moss-anime',
+      autoCast: true,
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://127.0.0.1:3080/story-image-bridge/cast/detect');
+    expect(init.method).toBe('POST');
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body.scene).toBe('胡桃靠在柱子上打哈欠。');
+    expect(body.configSet).toBe('moss-anime');
+    expect(body.autoCast).toBe(true);
+    expect(result).toEqual({
+      line: 'moss-anime',
+      mode: 'smart',
+      source: 'smart',
+      characters: ['胡桃：hu tao (genshin impact)'],
+      notes: ['自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)'],
+      catalog: true,
+    });
+  });
+
+  it('空正文立刻报错，不发请求（试跑按钮置灰之后的第一道闸）', async () => {
+    await expect(detectDshCast(conn(), { scene: '   ' })).rejects.toThrow('先给一段正文');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('404 = 对面插件太旧，说清要 2.14.0，而不是「网络不通」', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('', { status: 404 }));
+    const error = (await detectDshCast(conn(), { scene: '胡桃在窗边' }).catch(e => e)) as Error & { code?: string };
+    expect(error.code).toBe('BAD_REQUEST');
+    expect(error.message).toContain('2.14.0');
+  });
+
+  it('服务端的 400 原样透传（比如那条线被停用）', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(400, {
+      ok: false,
+      code: 'BAD_REQUEST',
+      error: '配置集 "moss-anime" 已被停用：先在配置台打开它的开关',
+    }));
+    const error = (await detectDshCast(conn(), { scene: '胡桃在窗边' }).catch(e => e)) as Error & { code?: string };
+    expect(error.code).toBe('BAD_REQUEST');
+    expect(error.message).toContain('已被停用');
+  });
+});
+
 describe('probeDshBridge', () => {
   it('回传版本、协议号、llm 可用性与配置集清单', async () => {
     fetchMock.mockResolvedValueOnce(
@@ -359,6 +465,8 @@ describe('probeDshBridge', () => {
       defaultConfigSet: 'anime-ob',
       // 老插件没有这个字段 → 空数组（面板据此把「动漫角色」那半边说清楚，而不是让人选完才发现发不出去）
       catalogLines: [],
+      // 老插件也没有自动认角色（2.14.0）→ 空串；面板据此提示「升级才有」，而不是给一个假的开关
+      autoCast: '',
       promptMaxChars: 4000,
     });
     const [url] = fetchMock.mock.calls[0] as [string];
@@ -375,10 +483,13 @@ describe('probeDshBridge', () => {
         configSets: ['moss-anime', 'moss-real'],
         defaultConfigSet: 'moss-real',
         catalogLines: ['moss-anime'],
+        autoCast: 'smart',
       }),
     );
     const health = await probeDshBridge(conn());
     expect(health.catalogLines).toEqual(['moss-anime']);
+    // 自动认角色的默认档位（2.14.0）：面板要能说出「现在这条线认到什么程度」。
+    expect(health.autoCast).toBe('smart');
   });
 
   it('老版本（没有 protocol 字段）按 1 处理，面板据此提示升级', async () => {
