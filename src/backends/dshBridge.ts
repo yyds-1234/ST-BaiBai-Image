@@ -182,6 +182,14 @@ export interface DshAutoCastPick {
   kind: 'archive' | 'catalog';
   /** 这一条是机械层认到的，还是模型提议后核对通过的。 */
   source: string;
+  /**
+   * 这一条自动建档时该绑的配置集（桥接 2.16.0）。
+   *
+   * 档案 = 档案自己的线（通用档是空串，哪条线都能用）；动漫角色 = 本单生效的线。
+   * 客户端照抄，别自己猜：绑错线在下一单会被 DSH 的 lineGate 静默跳过。
+   * 老插件（2.15.0）没有这个字段 → 空串（动漫角色退回本单的 result.line）。
+   */
+  line: string;
 }
 
 /** `POST /cast/detect` 的结果（协议 §4.6）：只认人，不出图、不写串。 */
@@ -800,7 +808,14 @@ function autoCastPicksOf(raw: unknown): DshAutoCastPick[] {
     const ref = typeof o.ref === 'string' ? o.ref.trim() : '';
     const kind = o.kind === 'archive' ? 'archive' : o.kind === 'catalog' ? 'catalog' : '';
     if (!label || !ref || !kind) continue;
-    out.push({ label, ref, kind, source: typeof o.source === 'string' ? o.source : '' });
+    out.push({
+      label,
+      ref,
+      kind,
+      source: typeof o.source === 'string' ? o.source : '',
+      // 老插件不带 line：留空串，由调用方按「动漫 ↔ result.line、档案 ↔ 通用」兜底。
+      line: typeof o.line === 'string' ? o.line.trim() : '',
+    });
   }
   return out;
 }
@@ -862,3 +877,4 @@ async function getJson(url: string, signal: AbortSignal, conn: DshBridgeConn): P
 function isDshErrorCode(value: string): value is DshErrorCode {
   return value in DEFAULT_ERRORS;
 }
+

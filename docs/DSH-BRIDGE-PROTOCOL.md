@@ -152,7 +152,7 @@
     "autoCast": {
       "source": "smart",
       "characters": ["胡桃：hu tao (genshin impact)"],
-      "picks": [{ "label": "胡桃", "ref": "hu tao (genshin impact)", "kind": "catalog", "source": "smart" }],
+      "picks": [{ "label": "胡桃", "ref": "hu tao (genshin impact)", "kind": "catalog", "source": "smart", "line": "moss-anime" }],
       "notes": ["自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)"]
     },
     "lint": { "warns": [], "infos": [], "skipped": null },
@@ -170,11 +170,14 @@
 - `autoCast`（2.14.0）：**这一单 DSH 自己认出了谁**。`source` 是 `mechanical`（只按档案 / 别名 /
   表里字面名）或 `smart`（还问过模型，名字经机械核对）；`notes` 是逐条说明（认成哪一条、哪条因
   歧义被跳过）。没认到人时整个字段不出现 —— 客户端据「有没有这个字段」决定要不要提示，不必判空数组。
-- `autoCast.picks`（**2.15.0**）：同一批人的结构化版本 —— `{ label, ref, kind, source }`。
+- `autoCast.picks`（**2.15.0**；`line` 自 **2.16.0**）：同一批人的结构化版本 ——
+  `{ label, ref, kind, source, line }`。
   `label` 是**正文里那个中文名**，`ref` 是**查表用的英文名**（`kind: 'catalog'`，如
   `hu tao (genshin impact)`）或档案 id（`kind: 'archive'`）。客户端拿这一对**自动建档**
   （柏宝绘存进「档案映射」），下单一开头就把 `label：ref` 放进 `characters` 发回来 ——
   那一步是正常的机械查表（`lookupCatalog` 精确命中），不用再跑识别模型，也不会这次认成 A、下次认成 B。
+  `line` 是这一条建档时**该绑的配置集**，客户端照抄：档案用自己的线（通用档 = 空串，哪条线都能用），
+  动漫角色用本单生效的线。绑错线下一单会被 lineGate 静默跳过，所以别让客户端自己猜。
   `characters`（`显示名：引用`）写法一字未改，老客户端照旧可用；**要建档请用 `picks`**，
   不要去拆 `characters` 的冒号（名字里理论上可以出现冒号）。
 - `requestId` 与 `jobId` 相同：拿它去配置台 `/story-image-admin` 的「请求历史」页，
@@ -235,8 +238,8 @@ POST { "scene": "芙宁娜坐在歌剧院高台上，胡桃靠在柱子旁打哈
   "source": "smart",
   "characters": ["芙宁娜：furina (genshin impact)", "胡桃：hu tao (genshin impact)"],
   "picks": [
-    { "label": "芙宁娜", "ref": "furina (genshin impact)", "kind": "catalog", "source": "smart" },
-    { "label": "胡桃", "ref": "hu tao (genshin impact)", "kind": "catalog", "source": "mechanical" }
+    { "label": "芙宁娜", "ref": "furina (genshin impact)", "kind": "catalog", "source": "smart", "line": "moss-anime" },
+    { "label": "胡桃", "ref": "hu tao (genshin impact)", "kind": "catalog", "source": "mechanical", "line": "moss-anime" }
   ],
   "notes": [
     "自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)",
@@ -249,8 +252,9 @@ POST { "scene": "芙宁娜坐在歌剧院高台上，胡桃靠在柱子旁打哈
 - 入参：`scene`（必填）、`configSet`（也认 `line`）、`autoCast`（`false` / `true` / `'mechanical'`）。
   不传 `autoCast` 就按 `bridge.autoCast`（默认 `smart`）；真人线一律降到 `mechanical`（没有表可查）。
 - `characters` 与 `/generate` 的 `characters` **同形**（`显示名：引用`）：客户端可以直接把它塞回请求。
-- `picks`（2.15.0）与 `/generate` 的 `autoCast.picks` 同形（`{ label, ref, kind, source }`）：
-  柏宝绘面板的「试跑」用它当场显示「正文里的名字 → 查表英文名」，也可以据此先建好映射。
+- `picks`（2.15.0；`line` 自 2.16.0）与 `/generate` 的 `autoCast.picks` 同形
+  （`{ label, ref, kind, source, line }`）：柏宝绘面板的「试跑」用它当场显示
+  「正文里的名字 → 查表引用」，也可以据此先建好映射。
 - `catalog` = 这条线有没有动漫表（`false` 表示只可能认档案）。
 - 为什么单开一条：平时认人藏在 `/generate` 里，要等一整张图（40～90s）才知道认成了谁；
   面板的「试跑自动认角色」用它当场看清「机械层认到谁、模型层又补了谁」——认错了立刻改映射或关开关。
@@ -374,10 +378,12 @@ POST { "scene": "芙宁娜坐在歌剧院高台上，胡桃靠在柱子旁打哈
   `characters` —— 出图结果与「用户自己映射了同样几个人」逐字一致。
 - 回执里单独报：`autoCast`（谁认出来的、机械还是模型）、`catalogCharacters`（哪些来自动漫表）、
   以及 `warnings` 里的逐条说明（认成哪一条、哪条因歧义跳过）。
-- **自动建档（2.15.0）**：认出来之后，`autoCast.picks` 会给出「正文里的中文名 + 查表用的英文名」。
-  柏宝绘把它自动写进「档案映射」（`charMappings`，标 `auto: true`），下一单直接当 `characters`
+- **自动建档（2.15.0；2.16.0 起档案也建）**：认出来之后，`autoCast.picks` 会给出
+  「正文里的中文名 + 查表引用 + 该绑的线」。柏宝绘把它自动写进「档案映射」（`charMappings`，标
+  `auto: true`；线照抄 `picks[].line`，通用档案 = 空串），下一单直接当 `characters`
   发回来 —— 于是下一次是**机械查表直接命中**，不再需要模型那趟（也省掉那两三秒），
-  同一个人也不会这次认成 A、下次认成 B。映射行在面板里可以删；同名已有手工映射时不覆盖。
+  同一个人也不会这次认成 A、下次认成 B。档案与动漫角色都建（默认线不查动漫表，只建动漫
+  等于一行都不建）；映射行在面板里可以删；同名已有手工映射时不覆盖。
 - 关掉的两处：面板「渠道 → DSH 写手 → 自动认角色」（发 `autoCast: false`），
   或 DSH 侧配置 `bridge.autoCast: 'off'`（影响所有调用方，包括阅读器）。
 

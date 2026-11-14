@@ -3,7 +3,7 @@ import {
   DSH_CHAR_MAP_MAX,
   dshMappingLabel,
   dshMappingValue,
-  mergeAutoCatalogMappings,
+  mergeAutoMappings,
   normalizeDshCharMappings,
   parseDshMappingValue,
   planDshCharacters,
@@ -161,8 +161,11 @@ describe('planDshCharacters:出图前算「谁按档案画、谁按角色库画�
   });
 });
 
-describe('mergeAutoCatalogMappings:DSH 认出来后自动建档（桥接 2.15.0）', () => {
-  const PICK = { label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog' };
+describe('mergeAutoMappings:DSH 认出来后自动建档（桥接 2.15.0 / 2.16.0）', () => {
+  const CATALOG_PICK = { label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog', line: 'moss-anime' };
+  // 通用档案：DSH 那条档案本身不绑线，所以 pick.line 是空串 —— 建出来的行哪条线都能用。
+  const GENERIC_ARCHIVE = { label: '瑶瑶', ref: '26-小静', kind: 'archive', line: '' };
+  const BOUND_ARCHIVE = { label: '林夏', ref: '40-林夏', kind: 'archive', line: 'moss-real' };
 
   it('动漫角色 → 新建一条 auto 映射,绑的是这一单实际生效的线', () => {
     const row: DshCharMapping = {
@@ -172,7 +175,7 @@ describe('mergeAutoCatalogMappings:DSH 认出来后自动建档（桥接 2.15.0�
       line: 'moss-anime',
       auto: true,
     };
-    const merged = mergeAutoCatalogMappings([], [PICK], 'moss-anime');
+    const merged = mergeAutoMappings([], [CATALOG_PICK], 'moss-anime');
     expect(merged.added).toEqual([row]);
     expect(merged.mappings).toEqual([row]);
     // 建好之后下一单开头就是 characters: ['胡桃：hu tao (genshin impact)'] —— 正常机械查表。
@@ -185,14 +188,36 @@ describe('mergeAutoCatalogMappings:DSH 认出来后自动建档（桥接 2.15.0�
     expect(plan.characters).toEqual(['胡桃：hu tao (genshin impact)']);
   });
 
-  it('档案那一路不建映射（DSH 下一单按名字照样能认到，存一份线反而会被跨线跳过）', () => {
-    const merged = mergeAutoCatalogMappings(
+  it('档案也建：默认线（不查动漫表）下认到的人照样进映射表', () => {
+    const merged = mergeAutoMappings([], [GENERIC_ARCHIVE], 'moss-real');
+    expect(merged.added).toEqual([{ name: '瑶瑶', kind: 'archive', ref: '26-小静', line: '', auto: true }]);
+    // 通用档案 = 不绑线：换到动漫线也照发（绑了 moss-real 反而会被跨线跳过）。
+    for (const line of ['moss-real', 'moss-anime']) {
+      const plan = planDshCharacters({ text: '瑶瑶回头笑', roles: [], mappings: merged.mappings, line });
+      expect(plan.characters).toEqual(['瑶瑶：26-小静']);
+    }
+  });
+
+  it('绑线的档案：线照抄档案自己的那条，不跟着本单的线走', () => {
+    const merged = mergeAutoMappings([], [BOUND_ARCHIVE], 'moss-anime');
+    expect(merged.added).toEqual([{ name: '林夏', kind: 'archive', ref: '40-林夏', line: 'moss-real', auto: true }]);
+    // 下一单切到别的线：这条被 lineGate 跳过，但仍留着（切回来就能用）。
+    const plan = planDshCharacters({ text: '林夏', roles: [], mappings: merged.mappings, line: 'moss-anime' });
+    expect(plan.characters).toEqual([]);
+    expect(plan.skipped).toEqual([{ name: '林夏', ref: '40-林夏', reason: 'line' }]);
+  });
+
+  it('老插件（2.15.0，pick 不带 line）的动漫角色退回本单的线，档案按通用处理', () => {
+    const merged = mergeAutoMappings(
       [],
-      [{ label: '小静', ref: '26-小静', kind: 'archive' }],
-      'moss-real',
+      [{ label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog' },
+        { label: '瑶瑶', ref: '26-小静', kind: 'archive' }],
+      'moss-anime',
     );
-    expect(merged.mappings).toEqual([]);
-    expect(merged.added).toEqual([]);
+    expect(merged.added).toEqual([
+      { name: '胡桃', kind: 'catalog', ref: 'hu tao (genshin impact)', line: 'moss-anime', auto: true },
+      { name: '瑶瑶', kind: 'archive', ref: '26-小静', line: '', auto: true },
+    ]);
   });
 
   it('同名已有用户手挑的行 → 一个字都不动（尊重用户的选择）', () => {
@@ -202,7 +227,7 @@ describe('mergeAutoCatalogMappings:DSH 认出来后自动建档（桥接 2.15.0�
       ref: 'hu tao (lawson) (genshin impact)',
       line: 'moss-anime',
     };
-    const merged = mergeAutoCatalogMappings([manual], [PICK], 'moss-anime');
+    const merged = mergeAutoMappings([manual], [CATALOG_PICK], 'moss-anime');
     expect(merged.mappings).toEqual([manual]);
     expect(merged.added).toEqual([]);
     expect(merged.updated).toEqual([]);
@@ -216,7 +241,7 @@ describe('mergeAutoCatalogMappings:DSH 认出来后自动建档（桥接 2.15.0�
       line: 'moss-real',
       auto: true,
     };
-    const merged = mergeAutoCatalogMappings([old], [PICK], 'moss-anime');
+    const merged = mergeAutoMappings([old], [CATALOG_PICK], 'moss-anime');
     expect(merged.added).toEqual([]);
     const expected: DshCharMapping = {
       name: '胡桃',
@@ -229,15 +254,25 @@ describe('mergeAutoCatalogMappings:DSH 认出来后自动建档（桥接 2.15.0�
     expect(merged.mappings[0]).toEqual(expected);
   });
 
+  it('同一条自动行这次被认成档案（或反过来）→ 整行改指向，不留两套长相', () => {
+    const old: DshCharMapping = { name: '瑶瑶', kind: 'catalog', ref: 'yao yao (x)', line: 'moss-real', auto: true };
+    const merged = mergeAutoMappings([old], [GENERIC_ARCHIVE], 'moss-real');
+    expect(merged.updated).toEqual([{ name: '瑶瑶', kind: 'archive', ref: '26-小静', line: '', auto: true }]);
+  });
+
   it('同一个名字重复出现只建一条（并列两次不会变成两行）', () => {
-    const merged = mergeAutoCatalogMappings([], [PICK, PICK], 'moss-anime');
+    const merged = mergeAutoMappings([], [CATALOG_PICK, CATALOG_PICK], 'moss-anime');
     expect(merged.mappings).toHaveLength(1);
     expect(merged.added).toHaveLength(1);
   });
 
-  it('有线才建：line 是空串（调用方没填、DSH 也没回）就什么都不建 —— 绑错线等于白建', () => {
-    const merged = mergeAutoCatalogMappings([], [PICK], '  ');
-    expect(merged.mappings).toEqual([]);
+  it('动漫角色缺线（老插件 + 调用方也没线）就不建；档案不受影响', () => {
+    const merged = mergeAutoMappings(
+      [],
+      [{ label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog' }, GENERIC_ARCHIVE],
+      '  ',
+    );
+    expect(merged.mappings).toEqual([{ name: '瑶瑶', kind: 'archive', ref: '26-小静', line: '', auto: true }]);
   });
 
   it('行数到上限就不再追加，但仍返回已有表', () => {
@@ -247,7 +282,7 @@ describe('mergeAutoCatalogMappings:DSH 认出来后自动建档（桥接 2.15.0�
       ref: '26-小静',
       line: 'moss-real',
     }));
-    const merged = mergeAutoCatalogMappings(full, [PICK], 'moss-anime');
+    const merged = mergeAutoMappings(full, [CATALOG_PICK], 'moss-anime');
     expect(merged.added).toEqual([]);
     expect(merged.mappings).toHaveLength(DSH_CHAR_MAP_MAX);
   });

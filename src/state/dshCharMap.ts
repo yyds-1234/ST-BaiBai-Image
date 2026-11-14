@@ -109,33 +109,51 @@ export function dshMappingLabel(mapping: Pick<DshCharMapping, 'kind' | 'ref' | '
 }
 
 /**
- * 把 DSH「自动认角色」认出来的动漫角色**自动建进映射表**(桥接 2.15.0)。
+ * DSH「自动认角色」回包里 `picks` 的一项（桥接 2.15.0 起；`line` 自 2.16.0）。
+ *
+ * `label` = 正文里那个名字（中文）；`ref` = 查表用的引用（档案 id 如 `26-小静`，
+ * 或动漫表里的 `hu tao (genshin impact)`）；`line` = 这一条该绑的配置集
+ * （档案用档案自己的线，通用档是空串；动漫角色用本单生效的线）。
+ */
+export interface DshAutoPick {
+  label: string;
+  ref: string;
+  kind: string;
+  line?: string;
+}
+
+/**
+ * 把 DSH「自动认角色」认出来的人**自动建进映射表**（桥接 2.15.0；2.16.0 起档案也建）。
  *
  * 为什么需要它:认人的结果是 `{ label: '胡桃', ref: 'hu tao (genshin impact)' }`，但下一单
- * 柏宝绘并不知道「胡桃」是谁 —— 没有映射就还得让 DSH 再认一次(模型那趟两三秒，且可能这次认成 A、
- * 下次认成 B)。把这一对存成映射后，下一单开头就是 `characters: ['胡桃：hu tao (genshin impact)']`，
- * DSH 走的是**正常的机械查表**(lookupCatalog 精确命中)，一次模型都不用问。
+ * 柏宝绘并不知道「胡桃」是谁 —— 没有映射就还得让 DSH 再认一次(动漫线那趟要问模型：两三秒，
+ * 且可能这次认成 A、下次认成 B)。把这一对存成映射后，下一单开头就是
+ * `characters: ['胡桃：hu tao (genshin impact)']`，DSH 走的是**正常的机械查表**
+ * (`lookupCatalog` 精确命中)，一次模型都不用问。
  *
- * 四条纪律:
- *   1. **只建动漫(`kind: 'catalog'`)的**：档案那条 DSH 已经按名字认到了，下一单照样能认到，
- *      存进映射反而要多存一份线(档案本身绑线，绑错就被跳过)。
- *   2. **线必须与这一单实际生效的配置集一致**：动漫映射线不符时下一单会被静默跳过 ——
- *      所以没有线(空串)就什么都不建，宁可下一单再认一次。
+ * 五条纪律:
+ *   1. **两种都建**：档案(`kind: 'archive'`, DSH 认到的默认线情形)与动漫角色(`kind: 'catalog'`)。
+ *      只建动漫会让默认线(moss-real，不查动漫表)下**一行都不建** —— 用户看到的就是
+ *      「认出来了但角色表里没有」，而这个通道本来就是为了让下一单不再重认。
+ *   2. **线照抄 `pick.line`，不自己猜**：档案用自己的线(通用档 = 空串，哪条线都能用)；
+ *      动漫角色用本单生效的线。绑错线在下一单会被静默跳过，所以宁可这一单不建也不瞎绑:
+ *      动漫角色没有线(空串)就跳过。
  *   3. **用户手挑的行不动**：同名已存在时只在 `auto: true` 的行上改指向；手挑的行哪怕 DSH 这次
  *      认成了别的条目，也尊重用户的选择(他可能是故意的)。
  *   4. 受 `DSH_CHAR_MAP_MAX` 约束：满了就不再加，返回的 `added` 为空 —— 调用方据此不弹提示。
+ *   5. 同一批 picks 里同名只建一条(后到的覆盖先到的)，免得面板上两行抢同一个人。
  *
  * 纯函数，不 import settings、不碰网络，单测能直接跑。
  *
  * @param mappings 现有映射表(任意脏数据都行，进来先归一)
  * @param picks DSH 回包里的 `autoCast.picks` / `/cast/detect` 的 `picks`
- * @param line 这一单**实际生效**的配置集 id(`result.line`，不是请求参数)
+ * @param line 这一单**实际生效**的配置集 id(`result.line`，不是请求参数)；仅在 pick 没带线时兜底
  * @param options.max 行数上限(默认 `DSH_CHAR_MAP_MAX`)
  * @returns `{ mappings, added, updated }`：`added` 是新建的行，`updated` 是自动行改了指向的
  */
-export function mergeAutoCatalogMappings(
+export function mergeAutoMappings(
   mappings: DshCharMapping[],
-  picks: { label: string; ref: string; kind: string }[],
+  picks: DshAutoPick[],
   line: string,
   options: { max?: number } = {},
 ): { mappings: DshCharMapping[]; added: DshCharMapping[]; updated: DshCharMapping[] } {
@@ -145,26 +163,35 @@ export function mergeAutoCatalogMappings(
   const out = normalizeDshCharMappings(mappings).map(item => ({ ...item }));
   const added: DshCharMapping[] = [];
   const updated: DshCharMapping[] = [];
-  const current = (line ?? '').trim();
-  if (!current) return { mappings: out, added, updated };
+  const fallbackLine = (line ?? '').trim();
 
   for (const pick of Array.isArray(picks) ? picks : []) {
-    if (pick?.kind !== 'catalog') continue;
+    const kind: DshCharMapKind | '' = pick?.kind === 'catalog'
+      ? 'catalog'
+      : pick?.kind === 'archive' ? 'archive' : '';
+    if (!kind) continue;
     const name = String(pick.label ?? '').trim().slice(0, NAME_MAX);
     const ref = String(pick.ref ?? '').trim().slice(0, REF_MAX);
     if (!name || !ref) continue;
+    // 线照抄 pick.line：档案用它自己的线（通用档 = 空串），动漫角色用本单的线。
+    // 动漫角色缺线就跳过（空线建出来在下一单会被静默跳过，等于白建）。
+    const bindLine = kind === 'archive'
+      ? String(pick.line ?? '').trim()
+      : String(pick.line ?? '').trim() || fallbackLine;
+    if (kind === 'catalog' && !bindLine) continue;
+
     const existing = out.find(item => item.name === name);
     if (existing !== undefined) {
       if (existing.auto !== true) continue;
-      if (existing.kind === 'catalog' && existing.ref === ref && existing.line === current) continue;
-      existing.kind = 'catalog';
+      if (existing.kind === kind && existing.ref === ref && existing.line === bindLine) continue;
+      existing.kind = kind;
       existing.ref = ref;
-      existing.line = current;
+      existing.line = bindLine;
       updated.push(existing);
       continue;
     }
     if (out.length >= cap) break;
-    const row: DshCharMapping = { name, kind: 'catalog', ref, line: current, auto: true };
+    const row: DshCharMapping = { name, kind, ref, line: bindLine, auto: true };
     out.push(row);
     added.push(row);
   }

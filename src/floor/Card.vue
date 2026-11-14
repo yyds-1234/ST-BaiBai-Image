@@ -38,7 +38,7 @@ import { formatGenerationMeta } from '@/generationMeta';
 import { channelLabel } from '@/pages/backend/channelSwitch';
 import { activeComfyPreset, activeOrientationLock, effectiveDshBridge, imageDisplayMaxHeight, settings } from '@/state/settings';
 import { chineseAppearanceForText, rolesForText, rolesWithoutAppearance } from '@/state/charTags';
-import { mergeAutoCatalogMappings, planDshCharacters } from '@/state/dshCharMap';
+import { mergeAutoMappings, planDshCharacters } from '@/state/dshCharMap';
 import { beginImage, failImage, finishImage, patchImagePrompt, safeHistory } from '@/state/history';
 import { copyText } from '@/st/clipboard';
 import { getContext } from '@/st/context';
@@ -448,15 +448,17 @@ async function generate(): Promise<void> {
         '柏宝绘',
       );
     }
-    // 自动建档（桥接 2.15.0）：把「正文里的名字 → 查表英文名」存进档案映射。
+    // 自动建档（桥接 2.15.0；2.16.0 起档案也建）：把「正文里的名字 → 查表引用」存进档案映射。
     // 下一单开头就是 `characters: ['胡桃：hu tao (genshin impact)']` —— DSH 走正常的机械查表，
     // 不再为同一个名字跑那趟识别模型（也避免这次认成 A、下次认成 B）。
-    // 只建动漫映射；用户手挑的行不会被覆盖（见 state/dshCharMap 的 mergeAutoCatalogMappings）。
-    let builtMappings: ReturnType<typeof mergeAutoCatalogMappings>['added'] = [];
+    // 档案与动漫角色都建；线照抄 picks 自带的那条（见 state/dshCharMap 的 mergeAutoMappings）。
+    // 用户手挑的行不会被覆盖。
+    let builtMappings: ReturnType<typeof mergeAutoMappings>['added'] = [];
     if (settings.dshBridge.autoMap && dshAutoCast !== undefined && dshAutoCast.picks.length > 0) {
-      // 绑线用 DSH **实际生效**的那条（result.line）：请求里的 configSet 可能只是空串。
+      // 兜底线用 DSH **实际生效**的那条（result.line）：请求里的 configSet 可能只是空串。
+      // 动漫角色缺线时才用它；档案有自己的线（通用档 = 空串）。
       const usedLine = (dshLine ?? '').trim() || effectiveDshBridge().configSet;
-      const merged = mergeAutoCatalogMappings(
+      const merged = mergeAutoMappings(
         settings.dshBridge.charMappings,
         dshAutoCast.picks,
         usedLine,
@@ -469,8 +471,8 @@ async function generate(): Promise<void> {
     if (builtMappings.length) {
       toastr.success(
         `已自动建档：${builtMappings.map(item => `${item.name} → ${item.ref}`).join('、')}`
-        + `（绑定 ${builtMappings[0].line}）。下次同一个名字直接查表，不再重新识别；`
-        + '映射可在「渠道 → DSH 写手 → 档案映射」里删。',
+        + `（${builtMappings[0].line ? `绑定 ${builtMappings[0].line}` : '通用，哪条线都能用'}）。`
+        + '下次同一个名字直接查表，不再重新识别；映射可在「渠道 → DSH 写手 → 档案映射」里删。',
         '柏宝绘',
       );
     }

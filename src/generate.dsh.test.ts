@@ -223,7 +223,7 @@ describe('generateImage: dsh 分支', () => {
         autoCast: {
           source: 'smart',
           characters: ['胡桃：hu tao (genshin impact)'],
-          picks: [{ label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog', source: 'smart' }],
+          picks: [{ label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog', source: 'smart', line: 'moss-real' }],
           notes: ['自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)'],
         },
         images: [{ base64: 'AAAA', mediaType: 'image/png', width: 832, height: 1216 }],
@@ -233,7 +233,7 @@ describe('generateImage: dsh 分支', () => {
     expect(output.dshAutoCast).toEqual({
       source: 'smart',
       characters: ['胡桃：hu tao (genshin impact)'],
-      picks: [{ label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog', source: 'smart' }],
+      picks: [{ label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog', source: 'smart', line: 'moss-real' }],
       notes: ['自动认角色：正文里出现「胡桃」→ 动漫表 hu tao (genshin impact)'],
     });
   });
