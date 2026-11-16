@@ -472,6 +472,10 @@ async function generate(): Promise<void> {
         settings.dshBridge.charMappings,
         dshAutoCast.picks,
         usedLine,
+        // 这一单柏宝绘**亲手发出去的裸名字**（`涛`，没有「：引用」）。它们回来时通常只是一条
+        // 机械命中的 archive、`created` 缺席 —— 因为档案是上一单就建好的。不把这些名字算进来，
+        // 映射表里就永远不会有 34-涛（实测：档案存在，映射表空的）。
+        { requested: job.dshCharacters.filter(item => !/[：:]/.test(item)) },
       );
       if (merged.added.length > 0 || merged.updated.length > 0) {
         settings.dshBridge.charMappings = merged.mappings;

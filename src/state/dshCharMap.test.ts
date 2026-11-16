@@ -310,7 +310,33 @@ describe('mergeAutoMappings:DSH 认出来后自动建档（桥接 2.15.0 / 2.16.
     const nuance = { label: '涛', ref: '34-涛', kind: 'archive', line: 'moss-anime' };
     const merged = mergeAutoMappings([], [nuance], 'moss-anime');
     expect(merged.mappings).toEqual([]);
-  });  it('老插件（2.15.0，pick 不带 line）的动漫角色退回本单的线', () => {
+  });
+
+  // 2026-11-16 用户第二次实测：「在柏宝绘上还是没看到 涛 → 34-涛」。
+  // 根因：档案是上一单就建好的，这一单 DSH 只回一条机械命中的 archive（created 缺席）。
+  // 「只收 created」那条规则因此永远等不到第二次机会 —— 唯一那次 created 的单子没跑成功，
+  // 此后每一单都被当成「既有档案」跳过，映射表于是永远是空的。
+  it('柏宝绘自己点名的既有档案（requested 里有点名）→ 建行，不再要求 created', () => {
+    const named = { label: '涛', ref: '34-涛', kind: 'archive', line: '' };
+    const merged = mergeAutoMappings([], [named], 'moss-anime', { requested: ['涛'] });
+    expect(merged.added).toEqual([{ name: '涛', kind: 'archive', ref: '34-涛', line: '', auto: true }]);
+    // 下一单开头就是 `涛：34-涛` —— DSH 走档案解析，不再靠裸名字碰运气。
+    const plan = planDshCharacters({
+      text: '人物名称：涛\n场景描述：傍晚的宿舍',
+      roles: [],
+      mappings: merged.mappings,
+      line: 'moss-anime',
+    });
+    expect(plan.characters).toEqual(['涛：34-涛']);
+  });
+
+  it('柏宝绘没点名、纯 DSH 从正文认出来的既有档案仍然不建', () => {
+    const merged = mergeAutoMappings([], [GENERIC_ARCHIVE], 'moss-real', { requested: ['安柏'] });
+    expect(merged.mappings).toEqual([]);
+    expect(merged.added).toEqual([]);
+  });
+
+  it('老插件（2.15.0，pick 不带 line）的动漫角色退回本单的线', () => {
     const merged = mergeAutoMappings(
       [],
       [{ label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog' }],

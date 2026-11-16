@@ -160,13 +160,18 @@ export interface DshAutoPick {
  * @param picks DSH 回包里的 `autoCast.picks` / `/cast/detect` 的 `picks`
  * @param line 这一单**实际生效**的配置集 id(`result.line`，不是请求参数)；仅在 pick 没带线时兜底
  * @param options.max 行数上限(默认 `DSH_CHAR_MAP_MAX`)
+ * @param options.requested 这一单柏宝绘**主动发出去的裸名字**（`characters` 里没有「：」的项）。
+ *   它们和 `created` 是同一件事的两个时机：档案还没建时 DSH 回 `created: true`；
+ *   档案上一单已经建好时 DSH 只回一条机械命中的 `archive`（`created` 缺席）——
+ *   那种单子如果也不建行，柏宝绘这边就永远看不到这份档案（实测：34-涛 建好了，映射表一直空着）。
+ *   只认**柏宝绘自己点名的人**，DSH 纯靠正文认出来的既有档案仍然不建（2026-11-14 口径不变）。
  * @returns `{ mappings, added, updated }`：`added` 是新建的行，`updated` 是自动行改了指向的
  */
 export function mergeAutoMappings(
   mappings: DshCharMapping[],
   picks: DshAutoPick[],
   line: string,
-  options: { max?: number } = {},
+  options: { max?: number; requested?: string[] } = {},
 ): { mappings: DshCharMapping[]; added: DshCharMapping[]; updated: DshCharMapping[] } {
   const cap = Number.isFinite(options.max) && (options.max as number) > 0
     ? Math.floor(options.max as number)
@@ -175,18 +180,25 @@ export function mergeAutoMappings(
   const added: DshCharMapping[] = [];
   const updated: DshCharMapping[] = [];
   const fallbackLine = (line ?? '').trim();
+  const requested = new Set(
+    (Array.isArray(options.requested) ? options.requested : [])
+      .map(item => String(item ?? '').trim())
+      .filter(Boolean),
+  );
 
   for (const pick of Array.isArray(picks) ? picks : []) {
     // 只建两种：动漫角色（纪律 1）、以及 DSH **这一单刚新建**的档案（`created: true`，2.25.0）。
     // 后者是「柏宝绘点名了 / 写手归属段里出现了、DSH 当场给他建了一份档案」—— 不记成映射行的话，
     // 柏宝绘这边永远看不到这份档案（实测：涛 在 DSH 建了 34-涛，柏宝绘的档案映射表里却没有他）。
     // DSH 认出来的**既有**档案仍然不建（那是 2026-11-14 的用户口径：映射由用户显式配）。
-    const kind: DshCharMapKind | '' = pick?.kind === 'catalog'
-      ? 'catalog'
-      : pick?.kind === 'archive' && pick.created === true ? 'archive' : '';
-    if (!kind) continue;
     const name = String(pick.label ?? '').trim().slice(0, NAME_MAX);
     const ref = String(pick.ref ?? '').trim().slice(0, REF_MAX);
+    // `requested`：柏宝绘这一单亲手点名发出去的人（裸名字）。DSH 认出来的**既有**档案不建行，
+    // 但「我自己发了这个人，DSH 说他是 34-涛」—— 那是一份用户已经默认接受的归宿，必须记下来。
+    const kind: DshCharMapKind | '' = pick?.kind === 'catalog'
+      ? 'catalog'
+      : pick?.kind === 'archive' && (pick.created === true || requested.has(name)) ? 'archive' : '';
+    if (!kind) continue;
     if (!name || !ref) continue;
     // 线照抄 pick.line；缺线时：动漫角色用调用方那条（每套配置集查各自的表），
     // 档案用空串 = 通用（**不能**冒用本单的线 —— 那会把通用档绑死在某条线上）。
