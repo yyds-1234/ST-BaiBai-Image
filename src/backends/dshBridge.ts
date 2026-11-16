@@ -657,6 +657,8 @@ export interface DshIdentityPatch {
   aliases?: string[];
   /** 形象块。不传 = 不改(只改名字时不必把块搬一遍)。 */
   charBlock?: string;
+  /** 绑哪条配置集;**传空串 = 改成通用档**(哪条线都能用)。不传 = 不改。 */
+  line?: string;
 }
 
 /** 保存一次档案编辑(`POST /identity` + `charId` + `overwrite`)。 */
@@ -671,6 +673,8 @@ export async function saveDshIdentity(
   if (patch.name !== undefined) payload.name = patch.name.trim();
   if (patch.aliases !== undefined) payload.aliases = patch.aliases;
   if (patch.charBlock !== undefined) payload.charBlock = patch.charBlock;
+  // 空串也是值:服务端靠「这个键在不在」区分「不动」与「改成通用」(2.28.3)。
+  if (patch.line !== undefined) payload.line = patch.line;
   const body = await shortRequest(conn, 'identity', { method: 'POST', body: payload }, signal);
   return {
     action: typeof body.action === 'string' ? body.action : '',

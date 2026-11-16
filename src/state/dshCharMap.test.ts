@@ -130,6 +130,20 @@ describe('planDshCharacters:出图前算「谁按档案画、谁按角色库画�
     expect(onReal.skipped).toEqual([]);
   });
 
+  it('动漫角色行的 line 是空串也照发（旧版这里是「永远不发」的 bug）', () => {
+    // 复现用户看到的「我一直没换过线，为什么提示绑的不是当前线」：
+    // 面板手动加的行走的是「池子里没找到 → 不改 row.line」，于是存成空串；
+    // 旧条件要求 line !== '' 且等于当前线 —— 空串永远不成立，那行从此一单都发不出去。
+    const plan = planDshCharacters({
+      text: '胡桃站在门口',
+      roles: [],
+      mappings: [{ name: '胡桃', kind: 'catalog', ref: 'hu tao (genshin impact)', line: '' }],
+      line: 'moss-anime',
+    });
+    expect(plan.characters).toEqual(['胡桃：hu tao (genshin impact)']);
+    expect(plan.skipped).toEqual([]);
+  });
+
   it('顺序按首次出现位置:第一位站主角位', () => {
     const plan = planDshCharacters({
       text: '人物名称：许梨与林夏',

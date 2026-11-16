@@ -217,6 +217,8 @@ const identityEditor = ref<{
   name: string;
   aliases: string;
   block: string;
+  /** 绑哪条配置集;空串 = 通用档（哪条线都能用）。 */
+  line: string;
   auto: boolean;
   loading: boolean;
   saving: boolean;
@@ -227,7 +229,7 @@ const identityEditor = ref<{
 async function openIdentityEditor(charId: string): Promise<void> {
   const id = String(charId ?? '').trim();
   if (!id) return;
-  identityEditor.value = { charId: id, name: '', aliases: '', block: '', auto: false, loading: true, saving: false, error: '' };
+  identityEditor.value = { charId: id, name: '', aliases: '', block: '', line: '', auto: false, loading: true, saving: false, error: '' };
   try {
     const full = await getDshIdentity(effectiveDshBridge(), id);
     identityEditor.value = {
@@ -236,6 +238,7 @@ async function openIdentityEditor(charId: string): Promise<void> {
       // 别名用顿号 / 逗号都能分开：中英文输入法混着来是常事。
       aliases: full.aliases.join('、'),
       block: full.block,
+      line: full.line,
       auto: full.auto,
       loading: false,
       saving: false,
@@ -269,6 +272,8 @@ async function saveIdentityEditor(): Promise<void> {
       name: editor.name,
       aliases,
       charBlock: editor.block,
+      // 空串 = 通用档：绑错线是最常遇到的坑，这里给一条「改成通用」的路。
+      line: editor.line,
     });
     identityNote.value = `已保存档案 ${result.charId}：显示名「${result.name}」，别名 ${result.aliases.length} 个`;
     identityEditor.value = null;
@@ -296,7 +301,10 @@ function onPickMapping(index: number, value: string): void {
   row.kind = picked.kind;
   row.ref = picked.ref;
   const hit = mappingPool.value.find(item => item.value === value);
+  // 池子里没有这一项（换过机器 / 没点刷新 / 旧值回显）：动漫角色的线就按当前线存，
+  // 别留成空串 —— 空串在面板上看起来像「没配」，而且旧版本的判定会把它当「线不符」直接丢掉。
   if (hit) row.line = hit.line;
+  else if (picked.kind === 'catalog') row.line = currentLine.value;
 }
 
 /** 拉档案清单；顺手把已存映射的线对齐到档案当前的线（档案被挪过线时免得留一条过期的线）。 */
@@ -623,6 +631,15 @@ async function probeCast(): Promise<void> {
                 v-model="identityEditor.aliases"
                 spellcheck="false"
                 placeholder="顿号 / 逗号分隔，如：砚青、Yanqing"
+              />
+            </label>
+            <label class="dsh-map-editor-field">
+              <span>绑线</span>
+              <BbiSelect
+                :model-value="identityEditor.line"
+                :options="[{ value: '', label: '通用（哪条线都能用）' }, ...configSetOptions.map(item => ({ value: item, label: item }))]"
+                aria-label="这份档案绑哪条配置集"
+                @update:model-value="identityEditor.line = $event"
               />
             </label>
             <label class="dsh-map-editor-field is-block">

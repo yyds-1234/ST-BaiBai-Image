@@ -692,6 +692,15 @@ describe('getDshIdentity / saveDshIdentity（编辑一份档案，桥接 2.28.1�
     expect('charBlock' in payload).toBe(false);
   });
 
+  it('改成通用档：line 空串要原样发出去（「不动」与「改成通用」是两件事）', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { ok: true, action: 'overwritten', charId: '26-小静', name: '小静', aliases: [], line: '' }),
+    );
+    await saveDshIdentity(conn(), { charId: '26-小静', line: '' });
+    const payload = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(payload).toEqual({ charId: '26-小静', overwrite: true, line: '' });
+  });
+
   it('404 原样透出「没有这份档案」（不是「插件太旧」）', async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(404, { ok: false, code: 'NOT_FOUND', error: '没有这份档案：99-不存在' }),
