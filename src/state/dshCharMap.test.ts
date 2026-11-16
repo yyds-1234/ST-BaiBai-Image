@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DSH_CHAR_MAP_MAX,
+  DSH_UNCLAIMED_MAX,
   dshMappingLabel,
   dshMappingValue,
   mergeAutoMappings,
@@ -161,6 +162,84 @@ describe('planDshCharacters:出图前算「谁按档案画、谁按角色库画�
   });
 });
 
+describe('planDshCharacters:占位里点名、但没人认领的人（桥接 2.25.0）', () => {
+  // 实测（2026-11-16）：「人物名称：安柏、涛」，只有映射过的 安柏 发了出去，涛 从头到尾
+  // 没进过管道 —— 没档案、没形象块、也没有归属外壳，成了没有脸的路人。
+  // 协议本来就允许「只给名字」，冒号后面那段由 DSH 自己解析（档案 → 动漫表 → 自动建档）。
+  const THREE_LINES = (names: string) =>
+    `人物名称：${names}\n人物服装：安柏：红制服\n场景描述：傍晚的宿舍，她弯下腰`;
+
+  it('没有映射、角色库里也没有块 → 发裸名字', () => {
+    const plan = planDshCharacters({
+      text: THREE_LINES('安柏、涛'),
+      roles: [],
+      mappings: [],
+      line: 'moss-real',
+    });
+    expect(plan.characters).toEqual(['安柏', '涛']);
+    expect(plan.roles).toEqual([]);
+  });
+
+  it('角色库里有块的人不发裸名字（那走 roles 旁路，两套长相会打架）', () => {
+    const plan = planDshCharacters({
+      text: THREE_LINES('安柏、林夏'),
+      roles: [{ name: '林夏', charBlock: '1girl, long black hair' }],
+      mappings: [],
+      line: 'moss-real',
+    });
+    expect(plan.characters).toEqual(['安柏']);
+    expect(plan.roles).toEqual([{ name: '林夏', charBlock: '1girl, long black hair' }]);
+  });
+
+  it('映射表里有的名字不发裸名字 —— 包括因线不符被跳过的人（那是用户指定的归宿）', () => {
+    const plan = planDshCharacters({
+      text: THREE_LINES('林夏、涛'),
+      roles: [],
+      mappings: [ARCHIVE],
+      line: 'moss-anime',
+    });
+    expect(plan.characters).toEqual(['涛']);
+    expect(plan.skipped).toEqual([{ name: '林夏', ref: '26-小静', reason: 'line' }]);
+  });
+
+  it('空镜 / 指代词不发（「无」「我」「她」都不是一个人）', () => {
+    for (const names of ['无', '我、她', '他']) {
+      const plan = planDshCharacters({ text: THREE_LINES(names), roles: [], mappings: [], line: 'moss-real' });
+      expect(plan.characters).toEqual([]);
+    }
+  });
+
+  it('老的一段散文占位（没有「人物名称：」那行）→ 一个裸名字都不发', () => {
+    const plan = planDshCharacters({
+      text: '她在天台上回头，风把头发吹到脸上',
+      roles: [],
+      mappings: [],
+      line: 'moss-real',
+    });
+    expect(plan.characters).toEqual([]);
+  });
+
+  it('顺序仍按首次出现位置：第一位站主角位（映射过的与未认领的混排）', () => {
+    const plan = planDshCharacters({
+      text: THREE_LINES('涛、林夏'),
+      roles: [],
+      mappings: [ARCHIVE],
+      line: 'moss-real',
+    });
+    expect(plan.characters).toEqual(['涛', '林夏：26-小静']);
+  });
+
+  it('未认领的人有上限（占位最多两个名字，防手滑）', () => {
+    const plan = planDshCharacters({
+      text: THREE_LINES('甲、乙、丙、丁、戊、己'),
+      roles: [],
+      mappings: [],
+      line: 'moss-real',
+    });
+    expect(plan.characters).toHaveLength(DSH_UNCLAIMED_MAX);
+    expect(plan.characters[0]).toBe('甲');
+  });
+});
 describe('mergeAutoMappings:DSH 认出来后自动建档（桥接 2.15.0 / 2.16.0）', () => {
   const CATALOG_PICK = { label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog', line: 'moss-anime' };
   // 档案那一路一律不建（2026-11-14 用户口径：真人线不自动认人/建档，档案映射必须手动配）。

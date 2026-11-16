@@ -17,6 +17,8 @@
  * 【本模块是纯函数】不 import settings / 不碰网络,单测能直接跑(同 shotspec / dupes 的纪律)。
  */
 
+import { dshPartsOf } from '@/autoTag/dshPlaceholder';
+
 /** 映射的两条去向:DSH 档案,或动漫线的角色表。 */
 export type DshCharMapKind = 'archive' | 'catalog';
 
@@ -212,6 +214,54 @@ export interface DshCharPlan {
   skipped: { name: string; ref: string; reason: 'line' }[];
 }
 
+
+/** 「这一单里没人认领的人」上限:占位最多写两个名字,多出来的都是模型手滑。 */
+export const DSH_UNCLAIMED_MAX = 4;
+
+/**
+ * 明显不是「一个人」的写法。占位协议里空镜写「无」,其余是模型偶尔会写的指代。
+ * 把它们发给 DSH 只会换来一份没用的档案,所以在这里就挡掉。
+ */
+const UNCLAIMED_STOP = new Set([
+  '无', '空镜', '我', '你', '他', '她', '它', '他们', '她们', '他们俩', '两人', '二人', '众人', '路人', '旁白', '某人',
+]);
+
+/**
+ * 占位「人物名称：」那一行里点名的所有人(还没和映射 / 角色库比对过)。
+ *
+ * 只认那一行:占位协议(v2.1)要求名字写在那里,正文里的人名不可靠(可能是回忆、转述),
+ * 拿正文认人会把「提到过」的人塞进画面。
+ */
+function namesInPlaceholder(text: string): string[] {
+  const line = dshPartsOf(text).names;
+  if (!line) return [];
+  const out: string[] = [];
+  for (const chunk of line.split(/[、，,；;/]+/)) {
+    const trimmed = chunk.trim();
+    if (!trimmed) continue;
+    out.push(...splitConjunction(trimmed));
+  }
+  return out;
+}
+
+/**
+ * 「甲与乙」/「甲和乙」也是模型常用的连人写法;但只在**两侧都有内容**时才切,
+ * 免得把「与那岭」「和子」这种名字切成两半。
+ */
+function splitConjunction(text: string): string[] {
+  const out: string[] = [];
+  let rest = text;
+  for (;;) {
+    const at = rest.search(/[与和]/);
+    if (at <= 0 || at >= rest.length - 1) {
+      out.push(rest);
+      break;
+    }
+    out.push(rest.slice(0, at));
+    rest = rest.slice(at + 1);
+  }
+  return out.map(item => item.trim()).filter(Boolean);
+}
 /**
  * 按占位文本算出这一单的角色清单。
  *
@@ -234,7 +284,9 @@ export function planDshCharacters(input: {
   const roles = Array.isArray(input.roles) ? input.roles : [];
   const mappings = normalizeDshCharMappings(input.mappings);
   const empty: DshCharPlan = { characters: [], roles: roles.slice(), skipped: [] };
-  if (!text.trim() || mappings.length === 0) return empty;
+  // 映射表空不代表什么都不发：占位里点名、两边都不认识的人照样要发（见下面 ②），
+  // 那是 DSH 查表 / 自动建档的唯一入口。
+  if (!text.trim()) return empty;
 
   // 长名优先命中、短名被长名覆盖:库里同时有「雪」与「小雪」时只留长的那个。
   const hits: { mapping: DshCharMapping; at: number }[] = [];
@@ -246,13 +298,15 @@ export function planDshCharacters(input: {
     accepted.push(mapping.name);
     hits.push({ mapping, at });
   }
-  if (hits.length === 0) return empty;
   hits.sort((a, b) => a.at - b.at);
 
-  const characters: string[] = [];
+  const picked: { text: string; at: number }[] = [];
   const skipped: DshCharPlan['skipped'] = [];
   const mapped = new Set<string>();
-  for (const { mapping } of hits) {
+  /** 映射表里出现过这个名字(哪怕因为线不符被跳过):它已经有用户指定的归宿,不许当野名字发。 */
+  const mappedNames = new Set<string>();
+  for (const { mapping, at } of hits) {
+    mappedNames.add(mapping.name.trim());
     const usable = mapping.kind === 'catalog'
       ? mapping.line !== '' && mapping.line === line
       : mapping.line === '' || mapping.line === line;
@@ -260,11 +314,37 @@ export function planDshCharacters(input: {
       skipped.push({ name: mapping.name, ref: mapping.ref, reason: 'line' });
       continue;
     }
-    characters.push(`${mapping.name}：${mapping.ref}`);
+    picked.push({ text: `${mapping.name}：${mapping.ref}`, at });
     mapped.add(mapping.name);
   }
+
+  // ② 占位里点名、但**两边都不认识**的人（2026-11-16，桥接 2.25.0）。
+  //
+  // 以前这种人既不进 characters 也不进 roles：DSH 收到的名单里根本没有他，图里就成了
+  // 没有脸的路人（实测「人物名称：安柏、涛」，只有映射过的 安柏 发了出去）。
+  // 协议 §3.1 本来就允许「只给名字」——冒号后面那段由 DSH 自己解析：
+  // 档案（显示名 / 别名）→ 动漫表 → 都没有就自动建档。三种归宿都在 DSH 那一侧，
+  // 柏宝绘这边只负责「把这一帧在场的人也点上去」。
+  //
+  // 三条纪律：
+  //   1. 映射表里有的名字永远不发裸名字（那是用户指定的归宿，包括因线不符被跳过的人）；
+  //   2. 角色库里有块的人不发（那走 roles 旁路，同一个名字两套长相会在串里打架）；
+  //   3. 空镜 / 指代词不发，总数受 DSH_UNCLAIMED_MAX 约束。
+  const known = new Set<string>([...mappedNames, ...roles.map(role => role.name.trim())]);
+  let unclaimed = 0;
+  for (const name of namesInPlaceholder(text)) {
+    if (unclaimed >= DSH_UNCLAIMED_MAX) break;
+    if (known.has(name) || UNCLAIMED_STOP.has(name) || name.length > NAME_MAX) continue;
+    const at = text.indexOf(name);
+    if (at < 0) continue;
+    known.add(name);
+    picked.push({ text: name, at });
+    unclaimed += 1;
+  }
+
+  picked.sort((a, b) => a.at - b.at);
   return {
-    characters,
+    characters: picked.map(item => item.text),
     // 映射生效的人不再走本地块;被跳过的人保留本地块(退而求其次,有长相总比没有好)。
     roles: roles.filter(role => !mapped.has(role.name.trim())),
     skipped,
