@@ -344,6 +344,9 @@ export type DshErrorCode =
   | 'NO_IMAGE'
   | 'TOO_BUSY'
   | 'NO_SUCH_JOB'
+  // 档案编辑（2.28.1）：按 charId 改一份不存在的档案时，服务端回 NOT_FOUND ——
+  // 它是「这份档案没了」（可恢复：刷新清单重选），不是 INTERNAL。
+  | 'NOT_FOUND'
   | 'INTERNAL';
 
 /**
@@ -372,6 +375,7 @@ const DEFAULT_ERRORS: Record<string, string> = {
   NO_IMAGE: 'DSH 提交成功但一张图都没取回',
   TOO_BUSY: 'DSH 桥接排队已满，请稍后再试',
   NO_SUCH_JOB: 'DSH 找不到这个任务（可能已过保留期，或 DSH 重启了）',
+  NOT_FOUND: 'DSH 找不到这份档案（可能已被删或改了名）：刷新档案清单再试',
   INTERNAL: 'DSH 内部异常',
 };
 
@@ -565,6 +569,117 @@ export async function listDshIdentities(
       };
     })
     .filter((x): x is DshIdentitySummary => x !== null);
+}
+
+/**
+ * 一份档案的**全文**(`GET /identity`,桥接 2.28.1)。
+ *
+ * 面板的「编辑档案」用它填表单:`GET /identities` 只回摘要(故意不带 char_block ——
+ * 十几份加起来几十 KB,选择器一个字都用不上),而改名字 / 加别名 / 改块必须有原文,
+ * 否则保存时只能把形象块清空 —— 那等于把这份长相弄丢。
+ */
+export interface DshIdentityFull {
+  charId: string;
+  name: string;
+  aliases: string[];
+  /** 档案绑的线;空串 = 通用。 */
+  line: string;
+  /** 自动建档的标记;**保存一次就清掉**(服务端 overwrite 会写 auto: false)。 */
+  auto: boolean;
+  /** `verbatim` = 块逐字进画面串(动漫线)。 */
+  inject: string;
+  source: string;
+  block: string;
+  blockChars: number;
+}
+
+/**
+ * 面板侧的短请求(人在面板上等,不能用出图那 180s 超时):
+ * 超时归 COMFY_UNAVAILABLE 那套「等会儿再来」的话术,失败统一翻成协议错误码。
+ */
+async function shortRequest(
+  conn: DshBridgeConn,
+  path: string,
+  init: { method: 'GET' | 'POST'; body?: unknown },
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  if (!conn.url.trim()) throw dshError('BAD_REQUEST', '请先填写 DSH 桥接地址');
+  const timeout = Math.min(conn.timeoutMs || 180000, 15000);
+  const linked = linkSignals(timeout, signal);
+  let result: { status: number; json?: Record<string, unknown> };
+  try {
+    result = init.method === 'GET'
+      ? await getJson(endpoint(conn.url, path), linked.signal, conn)
+      : await postJson(endpoint(conn.url, path), init.body ?? {}, linked.signal, conn);
+  } catch (error) {
+    const why = linked.reason();
+    if (why === 'abort') throw error;
+    throw dshError(TIMEOUT_CODE, `请求 DSH 超时(${Math.round(timeout / 1000)}s):${conn.url.trim()}`);
+  }
+  linked.reason();
+  const body = result.json;
+  // 404 在这里的含义是「没有这份档案」(路由本身是有的),原样翻错,别套用「插件太旧」那句话。
+  if (result.status >= 400 || !body || body.ok === false) throw failureFrom(result.status, body);
+  return body;
+}
+
+/** 读一份档案的全文(`GET /identity`)。 */
+export async function getDshIdentity(
+  conn: DshBridgeConn,
+  charId: string,
+  signal?: AbortSignal,
+): Promise<DshIdentityFull> {
+  const id = String(charId ?? '').trim();
+  if (!id) throw dshError('BAD_REQUEST', '没有指定档案 id');
+  const body = await shortRequest(conn, `identity?id=${encodeURIComponent(id)}`, { method: 'GET' }, signal);
+  const block = typeof body.block === 'string' ? body.block : '';
+  return {
+    charId: typeof body.charId === 'string' && body.charId ? body.charId : id,
+    name: typeof body.name === 'string' ? body.name : id,
+    aliases: Array.isArray(body.aliases)
+      ? body.aliases.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      : [],
+    line: typeof body.line === 'string' ? body.line : '',
+    auto: body.auto === true,
+    inject: typeof body.inject === 'string' ? body.inject : '',
+    source: typeof body.source === 'string' ? body.source : '',
+    block,
+    blockChars: typeof body.blockChars === 'number' && Number.isFinite(body.blockChars) ? body.blockChars : block.length,
+  };
+}
+
+/** 一次档案编辑要改什么:只传要改的字段(不传 = 不动)。 */
+export interface DshIdentityPatch {
+  charId: string;
+  /** 显示名:可以改成英文名。不传 = 不改。 */
+  name?: string;
+  /** 别名**整体替换**(空数组 = 清空别名)。不传 = 不改。 */
+  aliases?: string[];
+  /** 形象块。不传 = 不改(只改名字时不必把块搬一遍)。 */
+  charBlock?: string;
+}
+
+/** 保存一次档案编辑(`POST /identity` + `charId` + `overwrite`)。 */
+export async function saveDshIdentity(
+  conn: DshBridgeConn,
+  patch: DshIdentityPatch,
+  signal?: AbortSignal,
+): Promise<{ action: string; charId: string; name: string; aliases: string[] }> {
+  const id = String(patch?.charId ?? '').trim();
+  if (!id) throw dshError('BAD_REQUEST', '没有指定档案 id');
+  const payload: Record<string, unknown> = { charId: id, overwrite: true };
+  if (patch.name !== undefined) payload.name = patch.name.trim();
+  if (patch.aliases !== undefined) payload.aliases = patch.aliases;
+  if (patch.charBlock !== undefined) payload.charBlock = patch.charBlock;
+  const body = await shortRequest(conn, 'identity', { method: 'POST', body: payload }, signal);
+  return {
+    action: typeof body.action === 'string' ? body.action : '',
+    charId: typeof body.charId === 'string' && body.charId ? body.charId : id,
+    name: typeof body.name === 'string' ? body.name : (patch.name ?? id),
+    aliases: Array.isArray(body.aliases)
+      ? body.aliases.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      : (patch.aliases ?? []),
+  };
 }
 
 /**

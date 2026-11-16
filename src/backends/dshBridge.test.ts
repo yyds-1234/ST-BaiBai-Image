@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { detectDshCast, generateDshImage, listDshIdentities, probeDshBridge, searchDshCatalog, type DshBridgeConn } from '@/backends/dshBridge';
+import { detectDshCast, generateDshImage, getDshIdentity, listDshIdentities, probeDshBridge, saveDshIdentity, searchDshCatalog, type DshBridgeConn } from '@/backends/dshBridge';
 
 /**
  * DSH 桥接后端的契约（见 docs/DSH-BRIDGE-PROTOCOL.md v2）：
@@ -631,6 +631,76 @@ describe('listDshIdentities（档案清单，面板的「拉取」）', () => {
   });
 });
 
+
+describe('getDshIdentity / saveDshIdentity（编辑一份档案，桥接 2.28.1）', () => {
+  it('GET /identity?id= 把全文读回来（含 char_block 与别名）', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        ok: true,
+        charId: '35-砚青',
+        name: '砚青',
+        aliases: ['Yanqing', ''],
+        line: '',
+        auto: true,
+        inject: 'verbatim',
+        source: 'auto',
+        block: 'Yanqing. A male character.',
+        blockChars: 26,
+      }),
+    );
+    const full = await getDshIdentity(conn(), '35-砚青');
+    expect(full).toEqual({
+      charId: '35-砚青',
+      name: '砚青',
+      aliases: ['Yanqing'],
+      line: '',
+      auto: true,
+      inject: 'verbatim',
+      source: 'auto',
+      block: 'Yanqing. A male character.',
+      blockChars: 26,
+    });
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe(
+      'http://127.0.0.1:3080/story-image-bridge/identity?id=' + encodeURIComponent('35-砚青'),
+    );
+  });
+
+  it('保存按 charId 定位 + overwrite（改名才不会迷路）', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { ok: true, action: 'overwritten', charId: '35-砚青', name: 'Yanqing', aliases: ['砚青', 'Yanqing'] }),
+    );
+    const result = await saveDshIdentity(conn(), { charId: '35-砚青', name: 'Yanqing', aliases: ['砚青', 'Yanqing'] });
+    expect(result).toEqual({ action: 'overwritten', charId: '35-砚青', name: 'Yanqing', aliases: ['砚青', 'Yanqing'] });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://127.0.0.1:3080/story-image-bridge/identity');
+    expect(JSON.parse(String(init.body))).toEqual({
+      charId: '35-砚青',
+      overwrite: true,
+      name: 'Yanqing',
+      aliases: ['砚青', 'Yanqing'],
+    });
+  });
+
+  it('只改别名时不把 charBlock 也塞进请求（块由服务端保留）', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { ok: true, action: 'overwritten', charId: '35-砚青', name: '砚青', aliases: ['甲'] }),
+    );
+    await saveDshIdentity(conn(), { charId: '35-砚青', aliases: ['甲'] });
+    const payload = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(payload).toEqual({ charId: '35-砚青', overwrite: true, aliases: ['甲'] });
+    expect('charBlock' in payload).toBe(false);
+  });
+
+  it('404 原样透出「没有这份档案」（不是「插件太旧」）', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(404, { ok: false, code: 'NOT_FOUND', error: '没有这份档案：99-不存在' }),
+    );
+    const error = (await getDshIdentity(conn(), '99-不存在').catch(e => e)) as Error & { code?: string };
+    expect(error.code).toBe('NOT_FOUND');
+    expect(error.message).toContain('99-不存在');
+  });
+});
 describe('searchDshCatalog（动漫表检索，动漫线的映射来源）', () => {
   it('带 line 与 q 打 /catalog，回 entries 与 total', async () => {
     fetchMock.mockResolvedValueOnce(

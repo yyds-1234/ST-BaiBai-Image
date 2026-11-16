@@ -3,7 +3,9 @@ import { DSH_WORLDBOOK_ENTRY, DSH_WORLDBOOK_TITLE } from '@/autoTag/dshPlacehold
 import {
   DSH_PROTOCOL_VERSION,
   detectDshCast,
+  getDshIdentity,
   listDshIdentities,
+  saveDshIdentity,
   probeDshBridge,
   searchDshCatalog,
   type DshCastDetectResult,
@@ -180,6 +182,81 @@ function addMapping(): void {
 
 function removeMapping(index: number): void {
   settings.dshBridge.charMappings.splice(index, 1);
+}
+
+// ── 编辑档案（桥接 2.28.1）───────────────────────────────────────────────
+//
+// 自动建出来的档案（auto: true）以前只能在 DSH 配置台里改。柏宝绘这边看得见映射、
+// 也在同一个页面上，所以把「改名 / 加别名 / 改块」搬到这儿来 —— 三件事正是自动建档之后
+// 最常要修的：起草的英文名可能拼错、中文名要留成别名、起草的块可能不合意。
+//
+// 与映射行分开：改档案**不动**映射行（映射的 name 是占位里的写法，是匹配用的键；
+// 改了它这一单就再也匹配不上）。档案 id 也不改（引用它的是映射表）。
+const identityEditor = ref<{
+  charId: string;
+  name: string;
+  aliases: string;
+  block: string;
+  auto: boolean;
+  loading: boolean;
+  saving: boolean;
+  error: string;
+} | null>(null);
+
+/** 打开编辑器：先 GET /identity 把全文拉回来（摘要里没有 char_block，改块必须有原文）。 */
+async function openIdentityEditor(charId: string): Promise<void> {
+  const id = String(charId ?? '').trim();
+  if (!id) return;
+  identityEditor.value = { charId: id, name: '', aliases: '', block: '', auto: false, loading: true, saving: false, error: '' };
+  try {
+    const full = await getDshIdentity(effectiveDshBridge(), id);
+    identityEditor.value = {
+      charId: full.charId,
+      name: full.name,
+      // 别名用顿号 / 逗号都能分开：中英文输入法混着来是常事。
+      aliases: full.aliases.join('、'),
+      block: full.block,
+      auto: full.auto,
+      loading: false,
+      saving: false,
+      error: '',
+    };
+  } catch (error) {
+    if (identityEditor.value) {
+      identityEditor.value.loading = false;
+      identityEditor.value.error = errorMessage(error);
+    }
+  }
+}
+
+function closeIdentityEditor(): void {
+  identityEditor.value = null;
+}
+
+/** 保存：名字 / 别名 / 形象块一次写回（别名是**整体替换**，清空输入框 = 清空别名）。 */
+async function saveIdentityEditor(): Promise<void> {
+  const editor = identityEditor.value;
+  if (!editor || editor.saving || editor.loading) return;
+  editor.saving = true;
+  editor.error = '';
+  try {
+    const aliases = editor.aliases
+      .split(/[,，;；、\n]/)
+      .map(item => item.trim())
+      .filter(Boolean);
+    const result = await saveDshIdentity(effectiveDshBridge(), {
+      charId: editor.charId,
+      name: editor.name,
+      aliases,
+      charBlock: editor.block,
+    });
+    identityNote.value = `已保存档案 ${result.charId}：显示名「${result.name}」，别名 ${result.aliases.length} 个`;
+    identityEditor.value = null;
+    await refreshIdentities();
+  } catch (error) {
+    editor.error = errorMessage(error);
+    editor.saving = false;
+  }
 }
 
 /**
@@ -465,6 +542,16 @@ async function probeCast(): Promise<void> {
               @update:model-value="onPickMapping(index, $event)"
             />
             <button
+              v-if="row.kind === 'archive' && row.ref"
+              class="bbi-btn dsh-map-edit"
+              type="button"
+              :aria-label="`编辑档案 ${row.ref}`"
+              title="改档案本身：显示名 / 别名 / 形象块（自动建档起草的就是这里的内容）"
+              @click="openIdentityEditor(row.ref)"
+            >
+              编辑
+            </button>
+            <button
               class="bbi-btn dsh-map-del"
               type="button"
               :aria-label="`删除映射 ${row.name || '这一行'}`"
@@ -475,6 +562,59 @@ async function probeCast(): Promise<void> {
           </div>
         </div>
         <p v-else class="bbi-field-hint">还没有映射行：先「拉取档案清单」，再「添加一行」。</p>
+
+        <div v-if="identityEditor" class="dsh-map-editor">
+          <div class="dsh-map-editor-head">
+            <b>编辑档案</b>
+            <code class="mono">{{ identityEditor.charId }}</code>
+            <span v-if="identityEditor.auto" class="dsh-map-auto">自动建档</span>
+            <button class="bbi-btn dsh-map-editor-close" type="button" @click="closeIdentityEditor">关闭</button>
+          </div>
+          <p v-if="identityEditor.loading" class="bbi-field-hint">正在读取档案全文…</p>
+          <template v-else>
+            <label class="dsh-map-editor-field">
+              <span>显示名</span>
+              <input
+                class="bbi-input"
+                type="text"
+                v-model="identityEditor.name"
+                spellcheck="false"
+                placeholder="可以改成英文名，如 Yanqing"
+              />
+            </label>
+            <label class="dsh-map-editor-field">
+              <span>别名</span>
+              <input
+                class="bbi-input"
+                type="text"
+                v-model="identityEditor.aliases"
+                spellcheck="false"
+                placeholder="顿号 / 逗号分隔，如：砚青、Yanqing"
+              />
+            </label>
+            <label class="dsh-map-editor-field is-block">
+              <span>形象块</span>
+              <textarea
+                class="bbi-input dsh-map-editor-block"
+                v-model="identityEditor.block"
+                spellcheck="false"
+                rows="4"
+              ></textarea>
+            </label>
+            <p class="bbi-field-hint">
+              保存会写回 <code class="mono">identities/{{ identityEditor.charId }}.md</code>，
+              并<b>清掉「自动建档」标记</b>（改过就不再算机器写的）。
+              别名是<b>整体替换</b>：清空输入框 = 清空别名。档案 id 与映射行都不动 —— 引用它的还是这一行。
+            </p>
+            <p v-if="identityEditor.error" class="dsh-map-editor-error">{{ identityEditor.error }}</p>
+            <div class="dsh-map-editor-actions">
+              <button class="bbi-btn" type="button" :disabled="identityEditor.saving" @click="closeIdentityEditor">取消</button>
+              <button class="bbi-btn is-primary" type="button" :disabled="identityEditor.saving" @click="saveIdentityEditor">
+                {{ identityEditor.saving ? '保存中…' : '保存' }}
+              </button>
+            </div>
+          </template>
+        </div>
       </Collapsible>
 
       <Collapsible title="自动认角色" :open="false">
@@ -638,7 +778,8 @@ async function probeCast(): Promise<void> {
 }
 .dsh-map-row {
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.6fr) 32px;
+  /* 名字 / 目标 / 编辑（仅档案行有）/ 删除 */
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.6fr) auto 32px;
   gap: 8px;
   align-items: center;
 }
@@ -673,6 +814,64 @@ async function probeCast(): Promise<void> {
   align-items: center;
   justify-content: center;
 }
+/* 「编辑」按钮：档案行才有（动漫角色没有档案可改，名字就是表里那条）。 */
+.dsh-map-edit {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 档案编辑器：列表下方展开，不起浮层（面板里还有下拉在弹，浮层会打架）。 */
+.dsh-map-editor {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-l2);
+}
+.dsh-map-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.dsh-map-editor-close {
+  margin-left: auto;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.dsh-map-editor-field {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0;
+  font-size: 12.5px;
+}
+.dsh-map-editor-field.is-block {
+  align-items: start;
+}
+.dsh-map-editor-block {
+  min-height: 72px;
+  resize: vertical;
+  font-family: var(--bbi-font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.dsh-map-editor-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--dsw-alias-danger, #d9534f);
+}
+.dsh-map-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .dsh-map-search {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
