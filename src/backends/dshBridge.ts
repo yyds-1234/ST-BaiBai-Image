@@ -307,6 +307,14 @@ export interface DshGenerateValues {
    * 不传 = 按 DSH 侧 `bridge.autoCast` 的配置（默认 smart）。
    */
   autoCast?: boolean;
+  /**
+   * 修改意见（桥接 2.26.0）：用户看过上一张图之后提的「这次要改什么」。
+   *
+   * 与 `story` 相反 —— story 是前因（只读、不许写进画面），revision 是**命令**（写手必须照做）。
+   * DSH 把它放进写手 user 侧的 `## 修改要求`，并附三条纪律（只改点到的、不抄否定词、照旧回写状态）。
+   * 空串不发：老插件忽略未知字段，新插件则会把空串当成「有这一项但没内容」。
+   */
+  revision?: string;
   size: Orientation;
   /** 追加负向串;DSH 侧与配置集 negativeHint 合并,不替换。 */
   negative?: string;
@@ -706,6 +714,8 @@ export async function generateDshImage(
   // 剧情上下文（2.23.0）：空串不发 —— 老插件会忽略这个未知字段，新插件会把它排进写手的 `## 剧情`；
   // 发空串则等于声明「这一单有剧情字段但内容是空的」，白让写手多读一个小标题。
   if (values.story?.trim()) payload.story = values.story.trim();
+  // 修改意见（2.26.0）：重画时用户写的「哪里不对」。有才发 —— 空串等于声明「有这一项但没内容」。
+  if (values.revision?.trim()) payload.revision = values.revision.trim();
   if (conn.count > 0) payload.count = Math.min(8, Math.max(1, Math.floor(conn.count)));
   if (values.source) payload.source = values.source;
 

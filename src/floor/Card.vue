@@ -130,6 +130,16 @@ const collapsed = computed<boolean>({
 
 /** 触屏收纳菜单(⋯ 钮)的展开态;桌面 hover 一排直达,不用它。 */
 const menuOpen = ref(false);
+/**
+ * 「重新生图」的修改意见面板（DSH 写手渠道，桥接 2.26.0）。
+ *
+ * 为什么不在点下去就直接重画：DSH 每次重画都要跑一趟写手模型（几秒）+ 出一张图（几十秒），
+ * 而用户「想改一点」和「原样再来一张」是两件事 —— 没有输入口时，前者只能靠手改占位文本，
+ * 后者点一下就走。所以点重绘先把字收下来：留空 = 原样重画（老行为），有字才带 `revision`。
+ */
+const reviseOpen = ref(false);
+/** 修改意见原文。不清空 —— 同一处要改两三遍时不用重打。 */
+const reviseText = ref('');
 
 /** 运行态记录(可能为 undefined = 无在途任务)。 */
 const record = computed(() => getGenRecord(key.value));
@@ -295,7 +305,30 @@ const pendingHint = computed(() => {
   return '未配置 ComfyUI,请到柏宝绘「渠道」页填写工作流';
 });
 
-async function generate(): Promise<void> {
+/**
+ * 点右上角「重绘」：DSH 渠道先收修改意见，其余渠道直接重画。
+ *
+ * 只有 **DSH 写手渠道**弹意见框：ComfyUI / NAI 没有写手，没有人会读 `revision`，
+ * 弹一个填了也没用的输入框比不弹更糟。首次生成（还没有图）也直接出图 ——
+ * 那时没有「上一张」可改。
+ */
+function onRegenerate(): void {
+  menuOpen.value = false;
+  if (dshActive.value && shownEntry.value) {
+    reviseOpen.value = true;
+    return;
+  }
+  void generate();
+}
+
+/** 提交修改意见：留空 = 原样重画（老行为），有字才带上这一段。 */
+function submitRevise(): void {
+  const text = reviseText.value.trim();
+  reviseOpen.value = false;
+  void generate(text ? { revision: text } : {});
+}
+
+async function generate(options: { revision?: string } = {}): Promise<void> {
   if (busy.value || planning.value || !configured.value) return;
   const slot = key.value;
   const currentHash = hash.value;
@@ -340,6 +373,8 @@ async function generate(): Promise<void> {
         stripTags: settings.excludes.customStripTags,
       }).text
       : undefined,
+    // 修改意见（桥接 2.26.0）：重画时用户写的「这次要改什么」。留空就不发这个字段。
+    dshRevision: options.revision?.trim() || undefined,
     dshCharacters: dshPlan.characters,
     dshRoles: dshPlan.roles,
     // 自动认角色（协议 §3.1，桥接 2.14.0）：这一单里没映射命中的人，让 DSH 自己从占位正文里认人。
@@ -742,7 +777,7 @@ onMounted(() => {
           </button>
         </template>
         <template v-else>
-          <button v-if="configured" class="bbi-figure__generate" type="button" @click="generate">
+          <button v-if="configured" class="bbi-figure__generate" type="button" @click="generate()">
             <Icon name="palette" :size="15" />
             {{ phase === 'error' ? '重试' : isDshSlot ? '交给 DSH 出图' : '生成图片' }}
           </button>
@@ -783,7 +818,7 @@ onMounted(() => {
             type="button"
             :disabled="!configured"
             :title="configured ? '重绘' : '请先在柏宝绘「渠道」页完成配置'"
-            @click="menuOpen = false; generate()"
+            @click="onRegenerate"
           >
             <Icon name="refresh" :size="15" />
           </button>
@@ -845,7 +880,7 @@ onMounted(() => {
     <!-- 状态行:仅出错 / 提示词已改时出现,平时零占位 -->
     <p v-if="phase === 'error'" class="bbi-figure__status bbi-figure__status--error">
       {{ error
-      }}<button v-if="configured" class="bbi-figure__retry" type="button" @click="generate">
+      }}<button v-if="configured" class="bbi-figure__retry" type="button" @click="generate()">
         重试
       </button>
     </p>
@@ -856,6 +891,31 @@ onMounted(() => {
     <p v-else-if="filesGone" class="bbi-figure__status bbi-figure__status--warn">
       图片文件已删除(在图库里删掉了);可点上方重新生成
     </p>
+
+    <!-- 重新生图的修改意见（桥接 2.26.0）：点右上角重绘时弹出；留空 = 原样重画 -->
+    <div v-if="reviseOpen" class="bbi-figure__revise">
+      <div class="bbi-figure__revise-head">
+        <span class="bbi-figure__revise-title">重新生图</span>
+        <span class="bbi-figure__revise-sub">写要改什么；留空 = 原样重画</span>
+      </div>
+      <textarea
+        v-model="reviseText"
+        class="bbi-figure__revise-input"
+        rows="2"
+        placeholder="例：换成夜晚的灯光；表情再害羞一点；镜头拉近到上半身"
+        @keydown.ctrl.enter.prevent="submitRevise"
+      ></textarea>
+      <div class="bbi-figure__revise-actions">
+        <button class="bbi-figure__revise-btn" type="button" @click="reviseOpen = false">取消</button>
+        <button
+          class="bbi-figure__revise-btn bbi-figure__revise-btn--primary"
+          type="button"
+          @click="submitRevise"
+        >
+          {{ reviseText.trim() ? '按这条重画' : '原样重画' }}
+        </button>
+      </div>
+    </div>
 
     <!-- 提示词面板:悬浮 文本按钮唤起,复制按钮跟着面板走 -->
     <div v-if="promptOpen && promptText" class="bbi-figure__prompt-box">

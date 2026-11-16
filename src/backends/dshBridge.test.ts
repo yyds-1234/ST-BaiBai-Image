@@ -366,6 +366,21 @@ describe('autoCast（自动认角色，协议 §3.1 / 2.14.0）', () => {
     expect(body.autoCast).toBeUndefined();
   });
 
+  it('修改意见（2.26.0）：有字才发，留空就整个字段不出现', async () => {
+    // 有字：原样发 —— 写手的 `## 修改要求` 就是照着这一句写的。
+    respondWith(accepted(), jsonResponse(200, doneResult()));
+    await generateDshImage(conn(), { ...VALUES, revision: '  换成夜晚的灯光  ' });
+    const sent = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body)) as Record<string, unknown>;
+    expect(sent.revision).toBe('换成夜晚的灯光');
+
+    // 留空：不发。发空串等于声明「这一单有修改意见但内容是空的」，写手会多读一个空小标题。
+    fetchMock.mockClear();
+    respondWith(accepted(), jsonResponse(200, doneResult()));
+    await generateDshImage(conn(), { ...VALUES, revision: '   ' });
+    const blank = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body)) as Record<string, unknown>;
+    expect(blank.revision).toBeUndefined();
+  });
+
   it('回包里的 autoCast 与 catalogCharacters 折出来（谁认出来的、谁是动漫表来的）', async () => {
     respondWith(accepted(), jsonResponse(200, doneResult({
       characters: [],

@@ -80,6 +80,13 @@ export interface GenerateInput {
    */
   dshStory?: string;
   /**
+   * 修改意见（DSH 写手渠道，桥接 2.26.0）：用户点「重新生图」时写的「这次要改什么」。
+   *
+   * 只对 dshbridge 有意义 —— ComfyUI / NAI 没有写手，没人读它。卡片的重新生图按钮
+   * 会先弹一个输入框，留空 = 老行为（原样重画），有内容才带上这一段。
+   */
+  dshRevision?: string;
+  /**
    * 角色外貌（柏宝绘的角色库认出来的在场角色，按出场顺序）。
    *
    * **角色由柏宝绘管理**：它看得见正文、知道这一轮谁在场、长什么样，直接把外貌串交给 DSH。
@@ -380,6 +387,8 @@ export async function generateImage(
           scene,
           // 剧情上下文（桥接 2.23.0）：只给写手理解前因，不进画面串 —— 见 autoTag/dshStory.ts 的文件头。
           story: input.dshStory,
+          // 修改意见（桥接 2.26.0）：这一单是重画，用户写了要改什么（写手的 `## 修改要求`）。
+          revision: input.dshRevision,
           // 两条角色通道并行（协议 §3.1）：映射过的人按名字去 DSH 档案里查（能用 LoRA / line 门禁），
           // 没映射的人由柏宝绘把自己的块交过去。空清单整个字段不发 —— 发了等于声明「这批角色没长相」。
           characters: input.dshCharacters?.length ? input.dshCharacters : undefined,
