@@ -427,7 +427,7 @@ async function generate(options: { revision?: string } = {}): Promise<void> {
     toastr.warning(
       `档案映射 ${detail} 绑的不是当前这条线（${line}），这单没有发出去：`
       + 'DSH 侧跨线注入会被整单拦下。到「渠道 → DSH 写手 → 档案映射」把这几行改成当前线'
-      + '（或把配置集切到它绑的那条线）。',
+      + '（或把配置集切到它绑的那条线）。动漫角色不受这条限制：它们按当前线查表，照常发出。',
       '柏宝绘',
     );
   }

@@ -120,12 +120,14 @@ describe('planDshCharacters:出图前算「谁按档案画、谁按角色库画�
     expect(plan.roles).toEqual(roles);
   });
 
-  it('动漫角色必须与本线完全一致（每条线查各自的表）', () => {
+  it('动漫角色不看线:哪条线都照发（ref 是英文名，表由当前线决定）', () => {
+    // 2026-11-17 改口径：以前线不符就静默丢掉，症状是「有时这张图里没有她」。
+    // 现在照发；当前线查不到时由 DSH 的回执点名说清（人没了总得有句话）。
     const onAnime = planDshCharacters({ text: '胡桃站在门口', roles: [], mappings: [CATALOG], line: 'moss-anime' });
     expect(onAnime.characters).toEqual(['胡桃：hu tao (genshin impact)']);
     const onReal = planDshCharacters({ text: '胡桃站在门口', roles: [], mappings: [CATALOG], line: 'moss-real' });
-    expect(onReal.characters).toEqual([]);
-    expect(onReal.skipped[0]).toEqual({ name: '胡桃', ref: 'hu tao (genshin impact)', reason: 'line' });
+    expect(onReal.characters).toEqual(['胡桃：hu tao (genshin impact)']);
+    expect(onReal.skipped).toEqual([]);
   });
 
   it('顺序按首次出现位置:第一位站主角位', () => {

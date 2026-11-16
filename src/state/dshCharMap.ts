@@ -379,8 +379,12 @@ export function planDshCharacters(input: {
     for (const alias of Array.isArray(mapping.aliases) ? mapping.aliases : []) {
       mappedNames.add(String(alias ?? '').trim());
     }
+    // 动漫角色**不看线**（2026-11-17）:用户选的是「这个英文角色」,不是「这条线上的这个英文角色」;
+    // 表属于线,但 ref 是英文名,跨线通常同名。以前的「线不符就静默丢掉」只换来一句
+    // 「有时这张图里没有她」—— 现在照发,当前线查不到时由 DSH 回执点名说清。
+    // 档案行仍然看线:跨线注入会被 DSH 的 lineGate(strict) 整单拦下,那不是提示问题。
     const usable = mapping.kind === 'catalog'
-      ? mapping.line !== '' && mapping.line === line
+      ? true
       : mapping.line === '' || mapping.line === line;
     if (!usable) {
       skipped.push({ name: mapping.name, ref: mapping.ref, reason: 'line' });
