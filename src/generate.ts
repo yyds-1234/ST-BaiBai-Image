@@ -201,6 +201,14 @@ export interface GenerateOutput {
    * 所以「我发了裸名字、DSH 说他是 34-涛」这条账只能从这里读到。
    */
   dshCharacters?: string[];
+  /**
+   * DSH 那一趟**命中动漫表**的人，每项 `名字：表里的英文名`（`甘雨：ganyu (genshin impact)`）。
+   *
+   * 与 `dshCharacters` 是两条并列的通道：档案（有 id、能挂 LoRA）vs 动漫表（`copy_prompt`
+   * 原样注入、没有档案）。卡片补映射时两条都要读 —— 只读档案那一条，点名命中动漫表的人
+   * 在映射表里就没有归属行（实测：涛 有行、甘雨 什么都没有）。
+   */
+  dshCatalogCharacters?: string[];
 }
 
 /**
@@ -373,6 +381,8 @@ export async function generateImage(
     // DSH 自动认角色的结果：只有 DSH 那条分支会填，其它后端恒空（返回时按 undefined 处理）。
     let dshAutoCast: DshAutoCast | undefined;
   let dshCharacters: string[] | undefined;
+    // 动漫表命中的那批（`名字：表里的英文名`）：与 dshCharacters 并列的归属通道。
+    let dshCatalogCharacters: string[] | undefined;
     // DSH 实际生效的配置集：自动建档按它绑线（请求参数可能只是空串）。
     let dshLine = '';
     if (isDsh) {
@@ -425,6 +435,7 @@ export async function generateImage(
       result = output;
       dshAutoCast = output.autoCast;
       dshCharacters = output.characters;
+      dshCatalogCharacters = output.catalogCharacters;
       dshLine = output.line;
       // DSH 回了成品串就用它(那是「这次究竟发了什么」的唯一真相);没回就记散文本身,
       // 至少比一个空串更能说明这张图画的是什么。
@@ -521,6 +532,12 @@ export async function generateImage(
       meta,
       ...dshAutoCast === undefined ? {} : { dshAutoCast },
       ...dshLine ? { dshLine } : {},
+      // 这一单最终解析出来的角色清单（档案 id / 动漫表英文名）：卡片拿它补「档案映射」。
+      // 曾经漏在这里 —— 上面赋值了却没进返回值，卡片永远收不到，映射表也就永远补不上点名的人。
+      ...dshCharacters === undefined || dshCharacters.length === 0 ? {} : { dshCharacters },
+      ...dshCatalogCharacters === undefined || dshCatalogCharacters.length === 0
+        ? {}
+        : { dshCatalogCharacters },
     };
   } finally {
     release?.();

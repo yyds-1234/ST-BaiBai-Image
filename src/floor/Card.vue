@@ -461,7 +461,7 @@ async function generate(options: { revision?: string } = {}): Promise<void> {
     );
     // 闸门、后端分派都在 generateImage 里(公开接口走同一条路,见 generate.ts);
     // 本组件只把进度回调接到自己的槽位运行态上。
-    const { result, meta, finalPrompt, finalNegative, dshAutoCast, dshLine, dshCharacters } = await generateImage({ ...job, seed }, signal, {
+    const { result, meta, finalPrompt, finalNegative, dshAutoCast, dshLine, dshCharacters, dshCatalogCharacters } = await generateImage({ ...job, seed }, signal, {
       onStart: () => setGenPhase(slot, token, 'generating'),
       // 拼装完成即落账,**早于请求**:失败/被拦的请求也要能看清它本来要发什么。
       onPrompt: info => {
@@ -516,6 +516,21 @@ async function generate(options: { revision?: string } = {}): Promise<void> {
       const label = matched[1].trim();
       if (!label || !bareRequested.has(label)) continue;
       resolvedPicks.push({ label, ref, kind: 'archive', line: '' });
+    }
+    // 动漫表来的人（桥接回包 `catalogCharacters`，每项 `名字：表里的英文名`）：
+    // 与档案那条是同形不同源 —— 它没有档案 id，引用是表里的英文名。
+    // 少了这一段，「点名 + 命中动漫表」的人就永远补不出归属行（实测：涛 有档案行、
+    // 甘雨 命中动漫表却什么都没有，用户看到的就是「人物归属只写了一半」）。
+    for (const item of dshCatalogCharacters ?? []) {
+      const text = String(item ?? '');
+      const cut = text.search(/[：:]/);
+      if (cut <= 0) continue;
+      const label = text.slice(0, cut).trim();
+      const ref = text.slice(cut + 1).trim();
+      if (!label || !ref) continue;
+      // 只记「这一单柏宝绘亲手点的名」：自动认出来的那批走 picks，别在这里重复建行。
+      if (!bareRequested.has(label)) continue;
+      resolvedPicks.push({ label, ref, kind: 'catalog', line: '' });
     }
     const autoPicks = [...(dshAutoCast?.picks ?? []), ...resolvedPicks];
     if (settings.dshBridge.autoMap && autoPicks.length > 0) {

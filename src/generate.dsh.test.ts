@@ -245,6 +245,53 @@ describe('generateImage: dsh 分支', () => {
     expect(output.dshAutoCast).toBeUndefined();
   });
 
+  // 2026-11-16（2.26.x 回归）：`characters` / `catalogCharacters` 曾经**赋了值却没进返回值**，
+  // 卡片那边 destructure 出来永远是 undefined —— 映射表里点名的人（涛）补不上行，
+  // 命中动漫表的人（甘雨）更是连归属都没有。这两条把「回包必须冒到 output」钉住。
+  it('档案 id 与动漫表命中都冒到 output（卡片补映射的唯一来源）', async () => {
+    dshReady();
+    acceptThenDone({
+      ok: true,
+      status: 'done',
+      result: {
+        prompt: '以下整段只属于 涛 一个人：…',
+        scene: '甘雨与涛在花丛里',
+        // 档案那条是**纯引用**（`34-涛`）；动漫表那条是 `显示名：表里的英文名`。
+        characters: ['34-涛'],
+        catalogCharacters: ['甘雨：ganyu (genshin impact)'],
+        characterSource: 'explicit',
+        images: [{ base64: 'AAAA', mediaType: 'image/png', width: 832, height: 1216 }],
+      },
+    });
+    const output = await generateImage({
+      prompt: '',
+      dsh: '人物名称：甘雨、涛\n场景描述：黄昏的花丛',
+      dshCharacters: ['甘雨', '涛'],
+      size: 'portrait',
+      seed: 11,
+    });
+    expect(output.dshCharacters).toEqual(['34-涛']);
+    expect(output.dshCatalogCharacters).toEqual(['甘雨：ganyu (genshin impact)']);
+  });
+
+  it('两个角色清单都空时不留空壳字段', async () => {
+    dshReady();
+    acceptThenDone({
+      ok: true,
+      status: 'done',
+      result: {
+        prompt: '她站在窗边',
+        scene: '她站在窗边',
+        characters: [],
+        catalogCharacters: [],
+        images: [{ base64: 'AAAA', mediaType: 'image/png', width: 832, height: 1216 }],
+      },
+    });
+    const output = await generateImage({ prompt: '', dsh: '她站在窗边', size: 'portrait', seed: 12 });
+    expect(output.dshCharacters).toBeUndefined();
+    expect(output.dshCatalogCharacters).toBeUndefined();
+  });
+
   it('characters 的空清单同样不发（发 [] 等于声明「这单没有要查档案的人」）', async () => {
     dshReady();
     acceptThenDone();
