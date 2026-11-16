@@ -147,6 +147,15 @@ export interface DshImageResult extends ComfyImageResult {
    */
   catalogCharacters: string[];
   /**
+   * 这一单**最终解析出来**的角色清单（协议 §4 的 `result.characters`，形如
+   * `涛：34-涛` / `安柏：amber (genshin impact)`）。
+   *
+   * 与 `autoCast.picks` 的区别是这道口子覆盖**调用方点过名的人**：点名的人不参与自动识别，
+   * 所以永远不会出现在 picks 里 —— 但「我点名了涛、DSH 说他是 34-涛」正是要写进档案映射的那条账。
+   * 只看 picks 的话，柏宝绘自己点名的人在映射表里永远补不上（实测：34-涛 一直看不到）。
+   */
+  characters: string[];
+  /**
    * DSH 这次实际用的配置集 id（`result.line`，2.15.0 起随回包折出来）。
    *
    * 自动建档要把映射绑到**真正生效的那条线**上：目录里可能配了默认集，调用方也可能没传
@@ -844,6 +853,10 @@ function toImageResult(result: Record<string, unknown> | undefined, jobId: strin
     // 自动认角色 + 动漫表命中的账（2.14.0；picks 与 line 是 2.15.0）。老插件没有这些块 → 空，
     // 调用方据空/非空决定要不要提示、要不要自动建档。
     ...autoCastOf(result?.autoCast) === undefined ? {} : { autoCast: autoCastOf(result?.autoCast)! },
+    // 最终解析清单（2.26.1 起给卡片用）：含**调用方点过名**的人，`autoCast.picks` 里没有他们。
+    characters: Array.isArray(result?.characters)
+      ? (result.characters as unknown[]).filter((x): x is string => typeof x === 'string' && !!x.trim())
+      : [],
     catalogCharacters: Array.isArray(result?.catalogCharacters)
       ? result.catalogCharacters.filter((x): x is string => typeof x === 'string' && !!x.trim())
       : [],

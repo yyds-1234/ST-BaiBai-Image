@@ -461,7 +461,7 @@ async function generate(options: { revision?: string } = {}): Promise<void> {
     );
     // 闸门、后端分派都在 generateImage 里(公开接口走同一条路,见 generate.ts);
     // 本组件只把进度回调接到自己的槽位运行态上。
-    const { result, meta, finalPrompt, finalNegative, dshAutoCast, dshLine } = await generateImage({ ...job, seed }, signal, {
+    const { result, meta, finalPrompt, finalNegative, dshAutoCast, dshLine, dshCharacters } = await generateImage({ ...job, seed }, signal, {
       onStart: () => setGenPhase(slot, token, 'generating'),
       // 拼装完成即落账,**早于请求**:失败/被拦的请求也要能看清它本来要发什么。
       onPrompt: info => {
@@ -500,12 +500,30 @@ async function generate(options: { revision?: string } = {}): Promise<void> {
     // 不记成映射行，柏宝绘这边永远看不到这份档案（实测：涛 建了 34-涛，这里却什么都没有）。
     // 用户手挑的行不会被覆盖（见 state/dshCharMap 的 mergeAutoMappings）。
     let builtMappings: ReturnType<typeof mergeAutoMappings>['added'] = [];
-    if (settings.dshBridge.autoMap && dshAutoCast !== undefined && dshAutoCast.picks.length > 0) {
+    // 这一单柏宝绘**亲手发出去的裸名字**（`涛`，没有「：引用」）。
+    const bareRequested = new Set(
+      job.dshCharacters.filter(item => !/[：:]/.test(item)).map(item => item.trim()).filter(Boolean),
+    );
+    // 点名的人**不会进 `autoCast.picks`**（点名即不参与自动识别），所以要另外从回包的最终清单里捞：
+    // `result.characters` = `['涛：34-涛', '安柏：amber (genshin impact)']` —— 那是「我点名了涛、DSH 说他是 34-涛」
+    // 唯一有账的地方。只看 picks 的话，柏宝绘自己点名的人在映射表里永远补不上（实测：34-涛 一直看不到）。
+    const resolvedPicks: { label: string; ref: string; kind: 'archive' | 'catalog'; line: string }[] = [];
+    // 注意 `result.characters` 里是**纯引用**（`34-涛`），不是 `显示名：引用` —— 与 /cast/detect 不同。
+    // 档案 id 的契约是 `数字-名字`（lib/identity-file.js 的 nextIdentityId），名字就从那里反推。
+    for (const ref of dshCharacters ?? []) {
+      const matched = /^\d+-(.+)$/.exec(ref);
+      if (matched === null) continue;
+      const label = matched[1].trim();
+      if (!label || !bareRequested.has(label)) continue;
+      resolvedPicks.push({ label, ref, kind: 'archive', line: '' });
+    }
+    const autoPicks = [...(dshAutoCast?.picks ?? []), ...resolvedPicks];
+    if (settings.dshBridge.autoMap && autoPicks.length > 0) {
       // 绑线用 DSH **实际生效**的那条（result.line）：请求里的 configSet 可能只是空串。
       const usedLine = (dshLine ?? '').trim() || effectiveDshBridge().configSet;
       const merged = mergeAutoMappings(
         settings.dshBridge.charMappings,
-        dshAutoCast.picks,
+        autoPicks,
         usedLine,
         // 这一单柏宝绘**亲手发出去的裸名字**（`涛`，没有「：引用」）。它们回来时通常只是一条
         // 机械命中的 archive、`created` 缺席 —— 因为档案是上一单就建好的。不把这些名字算进来，
@@ -530,7 +548,7 @@ async function generate(options: { revision?: string } = {}): Promise<void> {
       }
       if (archiveRows.length) {
         parts.push(
-          `DSH 新建的档案：${archiveRows.map(item => `${item.name} → ${item.ref}`).join('、')}`
+          `档案：${archiveRows.map(item => `${item.name} → ${item.ref}`).join('、')}`
           + '，已记进映射表，下次这一单直接用这份长相',
         );
       }

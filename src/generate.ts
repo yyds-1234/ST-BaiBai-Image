@@ -194,6 +194,13 @@ export interface GenerateOutput {
    * 是空串（用 DSH 默认集），拿它去绑会绑成「无主」——动漫映射线不符时下一单会被静默跳过。
    */
   dshLine?: string;
+  /**
+   * DSH 这一单最终解析出来的角色清单（`涛：34-涛` / `安柏：amber (genshin impact)`）。
+   *
+   * 卡片拿它补档案映射：**调用方点过名的人不会进 `autoCast.picks`**（点名即不参与自动识别），
+   * 所以「我发了裸名字、DSH 说他是 34-涛」这条账只能从这里读到。
+   */
+  dshCharacters?: string[];
 }
 
 /**
@@ -365,6 +372,7 @@ export async function generateImage(
     let finalNegative = '';
     // DSH 自动认角色的结果：只有 DSH 那条分支会填，其它后端恒空（返回时按 undefined 处理）。
     let dshAutoCast: DshAutoCast | undefined;
+  let dshCharacters: string[] | undefined;
     // DSH 实际生效的配置集：自动建档按它绑线（请求参数可能只是空串）。
     let dshLine = '';
     if (isDsh) {
@@ -416,6 +424,7 @@ export async function generateImage(
       );
       result = output;
       dshAutoCast = output.autoCast;
+      dshCharacters = output.characters;
       dshLine = output.line;
       // DSH 回了成品串就用它(那是「这次究竟发了什么」的唯一真相);没回就记散文本身,
       // 至少比一个空串更能说明这张图画的是什么。
