@@ -279,7 +279,38 @@ describe('mergeAutoMappings:DSH 认出来后自动建档（桥接 2.15.0 / 2.16.
     expect(merged.added.map(row => row.kind)).toEqual(['catalog']);
   });
 
-  it('老插件（2.15.0，pick 不带 line）的动漫角色退回本单的线', () => {
+// 2026-11-16 用户实测：「涛 没有在柏宝绘端自动建档」—— DSH 建了 34-涛，柏宝绘的映射表却是空的，
+  // 因为旧口径「档案一律不建」。新建的档案是**这一单的产物**，必须记进来。
+  it('DSH 这一单刚新建的档案（created: true）→ 建一行 archive 映射，线照抄 pick.line', () => {
+    const createdPick = { label: '涛', ref: '34-涛', kind: 'archive', line: 'moss-anime', created: true };
+    const merged = mergeAutoMappings([], [createdPick], 'moss-anime');
+    expect(merged.added).toEqual([
+      { name: '涛', kind: 'archive', ref: '34-涛', line: 'moss-anime', auto: true },
+    ]);
+    // 下一单开头就是 `涛：34-涛` —— 走档案解析，不再靠裸名字碰运气。
+    const plan = planDshCharacters({
+      text: '人物名称：涛\n人物服装：冒险家服饰\n场景描述：傍晚的宿舍',
+      roles: [],
+      mappings: merged.mappings,
+      line: 'moss-anime',
+    });
+    expect(plan.characters).toEqual(['涛：34-涛']);
+  });
+
+  it('新建的档案没带线 → 存成通用（line 空），不能冒用本单的线', () => {
+    const merged = mergeAutoMappings(
+      [],
+      [{ label: '涛', ref: '34-涛', kind: 'archive', created: true }],
+      'moss-anime',
+    );
+    expect(merged.added).toEqual([{ name: '涛', kind: 'archive', ref: '34-涛', line: '', auto: true }]);
+  });
+
+  it('DSH 认出来的既有档案（没有 created）仍然不建 —— 那是用户显式配的', () => {
+    const nuance = { label: '涛', ref: '34-涛', kind: 'archive', line: 'moss-anime' };
+    const merged = mergeAutoMappings([], [nuance], 'moss-anime');
+    expect(merged.mappings).toEqual([]);
+  });  it('老插件（2.15.0，pick 不带 line）的动漫角色退回本单的线', () => {
     const merged = mergeAutoMappings(
       [],
       [{ label: '胡桃', ref: 'hu tao (genshin impact)', kind: 'catalog' }],

@@ -498,15 +498,17 @@ async function probeCast(): Promise<void> {
             v-model="settings.dshBridge.autoMap"
             type="checkbox"
             class="bbi-checkbox"
-            :disabled="!settings.dshBridge.autoCast"
           />
-          <span>认出来的动漫角色自动建档：把「名字 → 查表英文名」写进上面的档案映射</span>
+          <span>自动写进上面的档案映射：DSH 新建的档案 + 认出来的动漫角色</span>
         </label>
         <p class="bbi-field-hint">
-          建档之后，下一单开头就把它们当 <code>characters</code> 发过去，DSH 走的是<b>正常的机械查表</b>
-            （精确命中表里那一条），不再为同一个名字跑一趟识别模型，也不会这次认成 A、下次认成 B。
-          <b>只建动漫角色</b>：真人线不做自动识别、也不建映射（档案由你显式配才是对的）；
-          自动建的行绑的是本单生效的那条动漫线。你手挑的行不会被覆盖，自动行随时可以删。
+          <b>DSH 新建的档案</b>（查表查不到、DSH 按正文起草了一份，如 <code>涛 → 34-涛</code>）：
+          不写进映射表的话，这边永远看不到这份档案。
+          <b>认出来的动漫角色</b>（<code>胡桃 → hu tao (genshin impact)</code>）：下一单开头就把它们当
+          <code>characters</code> 发过去，DSH 走的是<b>正常的机械查表</b>（精确命中表里那一条），
+          不再为同一个名字跑一趟识别模型，也不会这次认成 A、下次认成 B。
+          自动建的行绑的是本单生效的那条线（新建档案没带线时按通用档存）。
+          DSH 认出来的<b>既有档案</b>不建（那由你在上面显式配）；你手挑的行不会被覆盖，自动行随时可以删。
         </p>
 
         <div class="bbi-field">

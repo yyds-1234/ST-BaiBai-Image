@@ -460,8 +460,10 @@ async function generate(): Promise<void> {
     // 自动建档（桥接 2.15.0）：把「正文里的名字 → 查表英文名」存进档案映射。
     // 下一单开头就是 `characters: ['胡桃：hu tao (genshin impact)']` —— DSH 走正常的机械查表，
     // 不再为同一个名字跑那趟识别模型（也避免这次认成 A、下次认成 B）。
-    // **只建动漫角色**（2026-11-14 用户口径）：档案映射由用户显式配，自动映射档案是错误行为；
-    // DSH 侧也只在动漫线认人。用户手挑的行不会被覆盖（见 state/dshCharMap 的 mergeAutoMappings）。
+    // **只建动漫角色 + DSH 这一单刚新建的档案**（2026-11-14 用户口径；2.25.0 修正）：
+    // 「DSH 认出来的既有档案」不建（档案映射由用户显式配），但「DSH 当场给他建了一份档案」要建 ——
+    // 不记成映射行，柏宝绘这边永远看不到这份档案（实测：涛 建了 34-涛，这里却什么都没有）。
+    // 用户手挑的行不会被覆盖（见 state/dshCharMap 的 mergeAutoMappings）。
     let builtMappings: ReturnType<typeof mergeAutoMappings>['added'] = [];
     if (settings.dshBridge.autoMap && dshAutoCast !== undefined && dshAutoCast.picks.length > 0) {
       // 绑线用 DSH **实际生效**的那条（result.line）：请求里的 configSet 可能只是空串。
@@ -477,10 +479,25 @@ async function generate(): Promise<void> {
       }
     }
     if (builtMappings.length) {
+      // 两种行说的是两件事，别用一句话糊过去：动漫行 = 以后直接查表；档案行 = DSH 刚建好的那张脸。
+      const catalogRows = builtMappings.filter(row => row.kind === 'catalog');
+      const archiveRows = builtMappings.filter(row => row.kind === 'archive');
+      const parts: string[] = [];
+      if (catalogRows.length) {
+        parts.push(
+          `动漫角色：${catalogRows.map(item => `${item.name} → ${item.ref}`).join('、')}`
+          + `（绑定 ${catalogRows[0].line}），下次直接查表、不再重新识别`,
+        );
+      }
+      if (archiveRows.length) {
+        parts.push(
+          `DSH 新建的档案：${archiveRows.map(item => `${item.name} → ${item.ref}`).join('、')}`
+          + '，已记进映射表，下次这一单直接用这份长相',
+        );
+      }
       toastr.success(
-        `已自动建档：${builtMappings.map(item => `${item.name} → ${item.ref}`).join('、')}`
-        + `（绑定 ${builtMappings[0].line}）。下次同一个名字直接查表，不再重新识别；`
-        + '映射可在「渠道 → DSH 写手 → 档案映射」里删。',
+        `已写入档案映射 —— ${parts.join('；')}。`
+        + '可在「渠道 → DSH 写手 → 档案映射」里改指向或删除。',
         '柏宝绘',
       );
     }
