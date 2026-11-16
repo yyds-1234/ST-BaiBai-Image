@@ -17,6 +17,7 @@ import {
   fetchWorldInfo,
 } from '@/autoTag/context';
 import type { BookMemoryContext } from '@/autoTag/bookMemory';
+import { DEFAULT_DSH_PLACEHOLDER_SPEC, DSH_WORLDBOOK_ENTRY } from '@/autoTag/dshPlaceholder';
 import { SHOT_ORDER_RULE } from '@/autoTag/shotspec';
 import { isAiStoryMessage, isStoryMessage, type STContext } from '@/st/context';
 import type { AutoTagSettings } from '@/state/settings';
@@ -518,5 +519,133 @@ ${characterRule}
   const taskBlock = taskNote?.trim() ? `${taskNote.trim()}\n\n` : '';
   const userContent = `${memoryText}\n\n${libraryBlock}\n\n${taskBlock}${previous ? `${previous}\n\n` : ''}--- 目标正文｜${roleLabel(context, targetFloor)} ---\n${preparedTarget.promptText}`;
   messages.push({ role: 'user', content: userContent });
+  return messages;
+}
+
+/**
+ * 世界设定块里若常驻着同一条画面占位协议(用户按面板说明导入了那条世界书),就从这里摘掉。
+ *
+ * 规范(内置默认或用户自定义)里已经有一份原文时,再让世界书注入一遍等于同一组规则叠两层权重;
+ * 更糟的是用户改了世界书那份却没改规范时,模型会同时收到两套有细微差别的口径。
+ * 判定挂在**生效规范**上:用户把协议从规范里删了,世界书那份就原样保留(它成了唯一来源)。
+ */
+export function dedupeProtocolFromWorldInfo(worldInfo: string, spec: string): string {
+  if (!worldInfo || !spec.includes(DSH_WORLDBOOK_ENTRY)) return worldInfo;
+  return worldInfo.replace(DSH_WORLDBOOK_ENTRY, '【上方规范已含同一条画面占位协议，此处不再重复。】');
+}
+
+/**
+ * DSH 写手渠道「手动生成画面占位」的请求。
+ *
+ * 与 buildAutoTagMessages 的差别只有三处(消息顺序、取上下文的方式、破限与设定注入全都相同):
+ * - 规范换成**画面占位协议**(世界书原文)+ 本次的输出契约;
+ * - 不要 tag/nl/characters、不要思维链:输出只有 images[{position, dsh, size}];
+ * - 不附【角色固定外貌库】:那条线的长相在 DSH 侧档案里,这里写的是委托书,不是 tag。
+ *
+ * 为什么不做成「复用 buildAutoTagMessages 再换个 spec」:那条函数的规则、示例、建档检查
+ * 全是 tag 流的,塞一个 dsh 分支进去会把两套契约搅在一起 —— 而模型对「示例形状」的照抄
+ * 远强于对规则的理解,示例里只要残留一个 tag 键,它就会继续交 tag。
+ */
+export async function buildDshPlaceholderMessages(
+  context: STContext,
+  targetFloor: number,
+  options: AutoTagSettings,
+  memory: BookMemoryContext | null,
+  /** Runner 在请求开始时生成的位置快照;缺省时由当前楼层即时生成。 */
+  preparedTargetOverride?: PreparedTargetText,
+): Promise<ChatMsg[]> {
+  const target = context.chat[targetFloor];
+  const preparedTarget =
+    preparedTargetOverride ??
+    prepareTargetText(target.mes, settings.excludes.customStripTags);
+  const previous = recentFloors(context, targetFloor, options.contextMessages)
+    .filter(floor => floor !== targetFloor)
+    .map(
+      floor =>
+        '--- 上下文｜' + roleLabel(context, floor) + ' ---\n' +
+        cleanHistoryText(context.chat[floor].mes, settings.excludes.customStripTags),
+    )
+    .join('\n\n');
+  const memoryText = memory ? memory.text : '角色参考：柏宝书本次未提供。';
+
+  // 世界书/角色卡/人设:与 tag 链路同一套取法(有则带,取不到降级为空)。委托书里只写
+  // 这一帧看得见的东西,但「这一帧里是谁、他叫什么」仍要靠这些设定兜住。
+  const scanFloors = recentFloors(context, targetFloor, options.contextMessages);
+  const [worldInfo, charCard, persona] = await Promise.all([
+    fetchWorldInfo(context.chat, scanFloors, context.name1, context.name2),
+    Promise.resolve(fetchCharCard(context)),
+    Promise.resolve(fetchUserPersona(context)),
+  ]);
+
+  const maxImages = Math.max(1, Math.floor(Number(options.maxImages)) || 1);
+  const minImages = Math.min(maxImages, Math.max(0, Math.floor(Number(options.minImages)) || 0));
+  const imageCountRule =
+    minImages === 0
+      ? '2. images 数量必须在 0～' + maxImages + ' 之间。这段正文里没有值得画的瞬间时可以返回空数组；不要为了接近上限而凑数。'
+      : '2. images 数量必须在 ' + minImages + '～' + maxImages + ' 之间。下限 ' + minImages +
+        ' 是用户明确要求：即使最强候选不足，也必须从目标正文中较次但仍值得画的瞬间补足，不得返回少于 ' + minImages +
+        ' 条或空数组。';
+  const sizeRule =
+    '4. size 只能填 "portrait"（竖构图）或 "landscape"（横构图）：人像、半身、特写写 portrait；' +
+    '横躺、侧卧、横跨画面或双人横向构图写 landscape；拿不准就填 "portrait"。';
+  const dshRule =
+    '5. dsh 就是那三行正文，行与行之间用换行符分隔（JSON 字符串里写成反斜杠 n）；' +
+    '里面不许出现尖括号标签、英文 tag、画风词、采样参数、负面词、尺寸数字。';
+
+  // 示例就是最终形状本身:模型照抄示例的倾向远强于照读规则,这里一个 tag 键都不许出现。
+  const outputShape = JSON.stringify({
+    images: [
+      {
+        position: 'P2',
+        dsh:
+          '人物名称：林夏\n' +
+          '人物服装：米色长风衣，右手收着黑伞\n' +
+          '场景描述：深夜的便利店门口，她侧身回头把湿发别到耳后，冷白灯从右侧打来',
+        size: 'portrait',
+      },
+    ],
+  });
+
+  // 委托单规范**可编辑**(设置页「自定义提示词 → DSH 委托单规范」):内置默认里嵌着世界书
+  // 协议原文 —— 格式只有一个真源,面板「复制世界书条目」、世界书条目、这条请求三处同一份。
+  // 用户改它 = 换委托书的写法(与自动 tag 链路改规范是同一件事)。
+  //
+  // 下面这半截(数量 / 位置 / 画幅 / JSON 形状)**不放开编辑**:它必须与 parseDshPlan 同源,
+  // 改错就是「模型交得漂亮、解析器一条都不认」,而这在设置页里完全看不出来。
+  const spec = (options.prompts?.dshSpec ?? '').trim() || DEFAULT_DSH_PLACEHOLDER_SPEC;
+  const contract = [
+    spec,
+    [
+      '**本次输出契约**',
+      '',
+      '1. 只给「目标正文」选瞬间，不要给上下文补图；优先表现玩家主角与主要角色的表情、状态、行动及关系，不为凑数加入路人或人群。人名用正文里的写法，不要音译或改名。',
+      imageCountRule,
+      '3. position 必须是“目标正文”段尾标出的 P编号（如 P2），表示把这条占位插在该段之后；选择让画面所需事实刚刚完整成立的位置。不要返回此前上下文中的位置，也不要自行编造编号。',
+      sizeRule,
+      dshRule,
+      '',
+      '只输出一个可解析的 JSON 对象，不要 Markdown 代码块，不要写 <thinking>，不要任何额外说明。形状固定为：',
+      outputShape,
+    ].join('\n'),
+  ].join('\n\n');
+
+  const messages: ChatMsg[] = [];
+  const jailbreak = (options.prompts?.jailbreak ?? '').trim() || DEFAULT_JAILBREAK_PROMPT;
+  if (jailbreak) messages.push({ role: 'system', content: jailbreak });
+  if (charCard) messages.push({ role: 'system', content: buildCharCardSystem(charCard) });
+  if (persona) messages.push({ role: 'system', content: buildPersonaSystem(persona) });
+  // 世界书里那条常驻的占位协议与规范内容重复,先摘掉再注入(见 dedupeProtocolFromWorldInfo)
+  const worldInfoText = dedupeProtocolFromWorldInfo(worldInfo, spec);
+  if (worldInfoText.trim()) {
+    messages.push({ role: 'system', content: buildWorldInfoSystem(worldInfoText) });
+  }
+  messages.push({ role: 'system', content: contract });
+  // 目标正文带段尾 P编号:位置判据与 tag 链路同一份(prepareTargetText),模型看到的形状一致。
+  messages.push({
+    role: 'user',
+    content:
+      memoryText + '\n\n' + (previous ? previous + '\n\n' : '') +
+      '--- 目标正文｜' + roleLabel(context, targetFloor) + ' ---\n' + preparedTarget.promptText,
+  });
   return messages;
 }

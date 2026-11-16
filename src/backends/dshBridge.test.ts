@@ -129,6 +129,20 @@ describe('generateDshImage（协议 v2：入队 + 轮询）', () => {
     expect(body.characters).toBeUndefined();
   });
 
+  it('剧情上下文按 story 发；空串整个不发（老插件忽略未知字段，行为不变）', async () => {
+    respondWith(accepted(), jsonResponse(200, doneResult()));
+
+    await generateDshImage(conn(), { ...VALUES, story: '  她推门进去，暖气涌上来。  ' });
+    const withStory = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body)) as Record<string, unknown>;
+    expect(withStory.story).toBe('她推门进去，暖气涌上来。');
+
+    fetchMock.mockClear();
+    respondWith(accepted(), jsonResponse(200, doneResult()));
+    await generateDshImage(conn(), { ...VALUES, story: '   ' });
+    const without = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body)) as Record<string, unknown>;
+    expect(without.story).toBeUndefined();
+  });
+
   it('档案映射与角色块同时发（协议 §3.1 两条通道并行）', async () => {
     respondWith(accepted(), jsonResponse(200, doneResult()));
 

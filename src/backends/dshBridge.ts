@@ -241,6 +241,17 @@ export interface DshGenerateValues {
   /** 画面占位散文。 */
   scene: string;
   /**
+   * 剧情上下文（协议 §3.1，桥接 2.23.0）：从**上一条占位**到这一条之间的正文，≤500 字。
+   *
+   * 【为什么占位之外还要给剧情】三行委托单只交代这一帧长什么样，「人为什么在这儿、刚才发生了什么」
+   * 全靠写手猜 —— 猜错的表现不是报错，而是图和正文对不上。这段只作理解用：
+   * DSH 侧把它放在写手的 `## 剧情` 段，明确「不要写进画面串」，也不参与自动认角色、
+   * 第一人称判据与最终拼装（见 docs/DSH-BRIDGE-PROTOCOL.md §3.1）。
+   *
+   * 取窗口的规则在 `autoTag/dshStory.ts`（`collectDshStory`）：上界是上一条占位，超过 500 字砍头留尾。
+   */
+  story?: string;
+  /**
    * 名字 → DSH 档案（或动漫表角色名）的映射清单，每项写 `名字：引用`。
    *
    * 【为什么是拼好的字符串，而不是 `{ name, ref }`】
@@ -661,6 +672,9 @@ export async function generateDshImage(
   if (values.autoCast !== undefined) payload.autoCast = values.autoCast;
   if (conn.configSet?.trim()) payload.configSet = conn.configSet.trim();
   if (values.negative?.trim()) payload.negative = values.negative.trim();
+  // 剧情上下文（2.23.0）：空串不发 —— 老插件会忽略这个未知字段，新插件会把它排进写手的 `## 剧情`；
+  // 发空串则等于声明「这一单有剧情字段但内容是空的」，白让写手多读一个小标题。
+  if (values.story?.trim()) payload.story = values.story.trim();
   if (conn.count > 0) payload.count = Math.min(8, Math.max(1, Math.floor(conn.count)));
   if (values.source) payload.source = values.source;
 

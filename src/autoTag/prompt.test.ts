@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { autoTagProfile, buildAutoTagMessages, expandNlSections } from '@/autoTag/prompt';
+import {
+  autoTagProfile,
+  buildAutoTagMessages,
+  buildDshPlaceholderMessages,
+  dedupeProtocolFromWorldInfo,
+  expandNlSections,
+} from '@/autoTag/prompt';
+import { DEFAULT_DSH_PLACEHOLDER_SPEC, DSH_WORLDBOOK_ENTRY } from '@/autoTag/dshPlaceholder';
 import {
   activeComfyPreset,
   DEFAULT_COMFY_THINKING,
@@ -31,6 +38,7 @@ function prompts(overrides: Partial<AutoTagPrompts> = {}): AutoTagPrompts {
     mossThinking: '',
     mossAnimeSpec: '',
     mossAnimeThinking: '',
+    dshSpec: '',
     ...overrides,
   };
 }
@@ -1859,6 +1867,94 @@ describe('思维链必须收得住', () => {
       expect(contract).toContain('没写就只靠 tag 那一处，不要为补外貌硬加一段');
     } finally {
       save.restore();
+    }
+  });
+});
+
+describe('DSH 画面占位请求', () => {
+  it('用世界书协议 + JSON 输出契约要三行委托书，不带 tag 流那套规则', async () => {
+    const oldBackend = settings.defaultBackend;
+    try {
+      settings.defaultBackend = 'dshbridge';
+      const options = mossOptions({ maxImages: 3 });
+      const messages = await buildDshPlaceholderMessages(context(), 1, options, null);
+      const joined = messages.map(message => message.content).join('\n---\n');
+
+      // 协议原文整段照搬世界书(格式只有一个真源),且必须先作废「续写」语境
+      expect(joined).toContain('【柏宝绘 · 画面占位协议 v2.1】');
+      expect(joined).toContain('你这次不是续写正文');
+      expect(joined).toContain('一次回复最多一条');
+      // 输出契约:JSON 形状、数量、位置、画幅
+      expect(joined).toContain('"dsh"');
+      expect(joined).toContain('images 数量必须在 0～3 之间');
+      expect(joined).toContain('P编号');
+      expect(joined).toContain('拿不准就填 "portrait"');
+      // 不能把 tag 流的契约混进来(两套规则同时在,模型只会折中)
+      expect(joined).not.toContain('你是严谨的剧情画面规划与生图提示词编写员');
+      expect(joined).not.toContain('【角色固定外貌库】');
+
+      const user = messages[messages.length - 1];
+      expect(user.role).toBe('user');
+      expect(user.content).toContain('--- 目标正文｜assistant（Char） ---');
+      expect(user.content).toContain('⟦P1⟧');
+    } finally {
+      settings.defaultBackend = oldBackend;
+    }
+  });
+
+  it('委托单规范可编辑，破限词置顶拼在规范之前（破限 + 世界书）', async () => {
+    const oldBackend = settings.defaultBackend;
+    try {
+      settings.defaultBackend = 'dshbridge';
+      const messages = await buildDshPlaceholderMessages(
+        context(),
+        1,
+        mossOptions({
+          prompts: prompts({ jailbreak: '我的破限词', dshSpec: '我的委托单规范' }),
+        }),
+        null,
+      );
+      // 破限永远第一条 system:与自动 tag 链路同一个位置,不随规范变
+      expect(messages[0]).toEqual({ role: 'system', content: '我的破限词' });
+      const specMessage = messages.find(message => message.content.includes('我的委托单规范'));
+      expect(specMessage).toBeTruthy();
+      // 用户规范替换掉内置那一份(内含世界书原文),但输出契约仍由插件追加
+      expect(messages.map(message => message.content).join('\n').includes('【柏宝绘 · 画面占位协议 v2.1】')).toBe(false);
+      expect(specMessage?.content).toContain('**本次输出契约**');
+      expect(specMessage?.content).toContain('"dsh"');
+      expect(specMessage?.content).toContain('images 数量必须在');
+    } finally {
+      settings.defaultBackend = oldBackend;
+    }
+  });
+
+  it('世界书里常驻的同一条协议会被摘掉，避免同一组规则叠两层', () => {
+    const worldInfo = '【别的条目】一些设定\n\n' + DSH_WORLDBOOK_ENTRY;
+    const deduped = dedupeProtocolFromWorldInfo(worldInfo, DEFAULT_DSH_PLACEHOLDER_SPEC);
+    expect(deduped).not.toContain('【柏宝绘 · 画面占位协议 v2.1】');
+    expect(deduped).toContain('此处不再重复');
+    expect(deduped).toContain('【别的条目】');
+    // 用户把协议从规范里删掉时，世界书那份是唯一来源，不许动它
+    expect(dedupeProtocolFromWorldInfo(worldInfo, '自定义规范')).toBe(worldInfo);
+    // 没有命中就原样返回（不改动无关内容）
+    expect(dedupeProtocolFromWorldInfo('只有设定', DEFAULT_DSH_PLACEHOLDER_SPEC)).toBe('只有设定');
+  });
+
+  it('下限大于 0 时改口要求补足，而不是允许空数组', async () => {
+    const oldBackend = settings.defaultBackend;
+    try {
+      settings.defaultBackend = 'dshbridge';
+      const messages = await buildDshPlaceholderMessages(
+        context(),
+        1,
+        mossOptions({ minImages: 2, maxImages: 2 }),
+        null,
+      );
+      const joined = messages.map(message => message.content).join('\n---\n');
+      expect(joined).toContain('images 数量必须在 2～2 之间');
+      expect(joined).not.toContain('时可以返回空数组');
+    } finally {
+      settings.defaultBackend = oldBackend;
     }
   });
 });

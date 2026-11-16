@@ -6,6 +6,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import Icon from '@/components/Icon.vue';
 import ModalMask from '@/components/ModalMask.vue';
 import { fetchModels, testChannel } from '@/api/client';
+import { DEFAULT_DSH_PLACEHOLDER_SPEC } from '@/autoTag/dshPlaceholder';
 import {
   BACKENDS,
   DEFAULT_COMFY_SPEC,
@@ -225,6 +226,16 @@ const TAG_PROMPT_METAS: TagPromptMeta[] = [
     label: 'MOSS 动漫思维链',
     hint: '与「MOSS 动漫规范」配套的输出前思考清单。留空用内置默认。',
     builtin: DEFAULT_MOSS_ANIME_THINKING,
+    macros: [],
+  },
+  // DSH 写手渠道只有一条请求用得到规范:手动补写画面占位(自动流程的占位由主模型按
+  // 世界书自己写,不发请求)。内置默认里嵌着世界书占位协议原文 —— 改这份等于改委托书
+  // 的写法;数量/位置/JSON 形状那一半仍由插件追加,不在这里。
+  {
+    key: 'dshSpec',
+    label: 'DSH 委托单规范',
+    hint: '「DSH 写手」渠道手动补写画面占位时拼进请求,定义三行委托书怎么写;内置默认内含世界书占位协议原文(与面板「复制世界书条目」同一份)。它前面还会拼上方的「破限词」,效果就是破限 + 世界书。输出契约(数量/位置/画幅/JSON 形状)由插件追加、不可在这里改。留空用内置默认。',
+    builtin: DEFAULT_DSH_PLACEHOLDER_SPEC,
     macros: [],
   },
 ];

@@ -31,6 +31,24 @@ const ICON_CLASS = 'fa-palette';
 
 let bound = false;
 
+/**
+ * 当前渠道是不是「DSH 写手」。
+ *
+ * 同一个按钮在两套渠道下做的事不同:本地渠道写 danbooru tag,DSH 渠道写画面占位
+ * (委托书由 DSH 侧写成成品串)。文案必须跟着换 —— 在占位渠道上写「生成生图 tag」,
+ * 用户会以为点错了按钮。
+ */
+function dshMode(): boolean {
+  return settings.defaultBackend === 'dshbridge';
+}
+
+/** 按钮 tooltip(随渠道切换,见 syncButtons 的说明)。 */
+function buttonTitle(): string {
+  return dshMode()
+    ? '生成画面占位（交给 DSH 写手写成提示词并出图）'
+    : '生成生图 tag（已有 tag 时重新生成）';
+}
+
 function setRunning(button: HTMLElement, running: boolean): void {
   button.dataset.running = running ? '1' : '';
   button.classList.toggle(ICON_CLASS, !running);
@@ -56,9 +74,12 @@ async function onActivate(button: HTMLElement): Promise<void> {
 
   const hasTags = hasImageTagTrace(message.mes ?? '');
   if (hasTags) {
+    // 两套渠道删掉的东西不同(tag / 画面占位),说清楚"删的是哪一份"再动手
     const ok = await confirmDialog({
-      title: '重新生成 tag',
-      text: '本楼已有生图 tag。重新生成会先删除原 tag 再写入新的；已生成的图片保留在卡片历史里，不会丢失。',
+      title: dshMode() ? '重新生成画面占位' : '重新生成 tag',
+      text: dshMode()
+        ? '本楼已有生图 tag 或画面占位。重新生成会先删掉原来的再写入新的占位；已生成的图片保留在卡片历史里，不会丢失。'
+        : '本楼已有生图 tag。重新生成会先删除原 tag 再写入新的；已生成的图片保留在卡片历史里，不会丢失。',
       confirmText: '重新生成',
     });
     if (!ok) return;
@@ -77,7 +98,7 @@ function createButton(): HTMLDivElement {
   const button = document.createElement('div');
   // mes_button 与 .extraMesButtons 里的 ST 原生扩展按钮同类(menu_button 是通用菜单按钮,样式不同)
   button.className = `mes_button fa-solid ${ICON_CLASS} ${BUTTON_CLASS}`;
-  button.title = '生成生图 tag（已有 tag 时重新生成）';
+  button.title = buttonTitle();
   button.setAttribute('role', 'button');
   button.setAttribute('tabindex', '0');
 
@@ -114,6 +135,8 @@ function syncButtons(): void {
     const wanted = !excluded && Number.isInteger(floor) && isAiStoryMessage(chat[floor]);
     const existing = extra.querySelector<HTMLElement>(`.${BUTTON_CLASS}`);
     if (wanted && !existing) extra.appendChild(createButton());
+    // 已有按钮只更新文案:切换渠道不会重建楼层 DOM,不刷新的话按钮还顶着旧渠道的说法
+    else if (wanted && existing) existing.title = buttonTitle();
     else if (!wanted && existing && existing.dataset.running !== '1') existing.remove();
   }
 }

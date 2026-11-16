@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import { dshPartsOf, dshSceneForBridge, isDshPlaceholder } from '@/autoTag/dshPlaceholder';
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import { MAX_INSTRUCTION } from '@/autoTag/slotPlan';
 import type { Orientation } from '@/backends/size';
 import BbiTextarea from '@/components/BbiTextarea.vue';
 import Icon from '@/components/Icon.vue';
 import ModalMask from '@/components/ModalMask.vue';
-import { activeOrientationLock } from '@/state/settings';
+import { activeOrientationLock, settings } from '@/state/settings';
 import { containsTagMarkup, normalizeDshText, type ImageTagContent } from '@/st/imageTagRegex';
 
 /**
@@ -74,12 +75,22 @@ const open = ref(false);
 
 const tag = ref(props.content.tag);
 /**
- * DSH 占位的画面描述(固定三行:人物名称 / 人物服装 / 场景描述)。它**不可在这里编辑**,
- * 但必须原样带回:弹窗只编辑五个结构化字段,没给编辑的字段静默丢掉就等于「打开看一眼
- * 再保存,这条占位被抹成空 tag」——而 promptHash 吃原文,老图会集体变成「旧提示词」。
- * 三行也原样保留(dshText 只清空白,不折行)。
+ * DSH 占位的画面描述(固定三行:人物名称 / 人物服装 / 场景描述)。
+ *
+ * 【这条渠道的「提示词」就是它,故与 tag 同等可编辑】DSH 写手路径下柏宝绘不拼串:
+ * 成品串由 DSH 侧按配置集现写,真正送过去的是这三行委托书 + 负面词 + 画幅方向。
+ * 以前它只读,想改一个词得回正文里手改整条 <dsh>;现在在这里改完点「应用」即可
+ * (序列化仍走 serializeImageTag —— dsh 空时不写空子标签,不会凭空给老 tag 造一个)。
+ *
+ * 三行原样保留换行(dshText 只清空白,不折行):行就是格式本身,折掉会让原文变化、
+ * promptHash 跟着变,于是「打开看一眼再保存」也会把老图打成「旧提示词」。
  */
 const dsh = ref(props.content.dsh ?? '');
+/**
+ * 这条槽位是不是 DSH 占位。**开窗时判定一次**(与 tag/nl 一样属于快照),
+ * 不跟着草稿实时算:用户逐字清空三行的过程中若字段突然消失,正在输入的框会当场卸载。
+ */
+const dshSlot = ref(isDshPlaceholder(props.content));
 const nl = ref(props.content.nl);
 const negative = ref(props.content.negative);
 const size = ref<Orientation>(props.content.size);
@@ -128,6 +139,27 @@ function oneLine(text: string): string {
 function dshText(text: string): string {
   return normalizeDshText(text);
 }
+
+/** 三行拆解结果:只用于「按三行整理」的可用性,不参与保存口径(保存吃的是 dshText)。 */
+const dshParts = computed(() => dshPartsOf(dsh.value));
+
+/**
+ * 「按三行整理」:把标签顺序、半角冒号、行内空白拉直(纯函数,见 autoTag/dshPlaceholder)。
+ *
+ * 缺任何一行时它**原样返回** —— 那是 v1.0 的一段散文占位,断言不了三行就不替用户改写。
+ * 故按钮也置灰:点了没反应比没有这个按钮更让人困惑。
+ */
+function tidyDsh(): void {
+  if (!dshParts.value.complete) return;
+  dsh.value = dshSceneForBridge(dsh.value);
+}
+
+/**
+ * 当前渠道是不是 DSH 写手。只影响「AI 重写提示词」那一块:重写走 autoTag 的 tag 协议,
+ * 而 runner 在 DSH 渠道会直接判 dsh-bridge-mode 拦下(runner.ts),留着按钮等于留一个
+ * 必然失败的入口。占位文案本身由主模型按世界书写,这里要改的是上面的画面描述。
+ */
+const dshChannel = computed(() => settings.defaultBackend === 'dshbridge');
 
 /** 草稿归一后的结果 —— 保存与「有没有改」都以它为准,两处不能各算一次。 */
 const draft = computed<ImageTagContent>(() => ({
@@ -210,6 +242,7 @@ watch(
   next => {
     tag.value = next.tag;
     dsh.value = next.dsh ?? '';
+    dshSlot.value = isDshPlaceholder(next);
     nl.value = next.nl;
     negative.value = next.negative;
     size.value = next.size;
@@ -292,59 +325,108 @@ onBeforeUnmount(() => {
       </header>
 
       <!-- AI 重写:手改与 AI 改是同一件事的两种手段,故聚在同一个弹窗里。
-           跑完直接落盘并出图(见 promptEditor.ts),结果回填到下面的输入框。 -->
-      <div class="bbi-modal-field">
-        <span class="bbi-modal-label">修改意见(可选,告诉 AI 这次要改哪里)</span>
-        <BbiTextarea
-          v-model="instruction"
-          class="bbi-prompt-area"
-          :rows="2"
-          :max-rows="4"
-          :disabled="busy || rewriting"
-          placeholder="例如：机位别贴这么近，改成半身；裙子是浅灰不是白色"
-        />
-        <span class="bbi-field-hint">
-          填了就只按这条意见改，没提到的部分保持原样；留空 = 让 AI 按正文自行重写。
-          重写完成后这段意见会留在框里，方便照着同一条意见再改一次。
-          <span v-if="instructionOver" class="bbi-instruction-over">
-            已超过 {{ MAX_INSTRUCTION }} 字，超出的部分在发给 AI 时会被截断。
+           跑完直接落盘并出图(见 promptEditor.ts),结果回填到下面的输入框。
+           **DSH 写手渠道下整块不出现**:重写走 autoTag 的 tag 协议,runner 在该渠道会直接
+           判 dsh-bridge-mode 拦下(见 runner.ts),留下按钮等于留一个必然失败的入口。
+           那条渠道要改画面,改的是下面的「画面描述」委托书。 -->
+      <template v-if="!dshChannel">
+        <div class="bbi-modal-field">
+          <span class="bbi-modal-label">修改意见(可选,告诉 AI 这次要改哪里)</span>
+          <BbiTextarea
+            v-model="instruction"
+            class="bbi-prompt-area"
+            :rows="2"
+            :max-rows="4"
+            :disabled="busy || rewriting"
+            placeholder="例如：机位别贴这么近，改成半身；裙子是浅灰不是白色"
+          />
+          <span class="bbi-field-hint">
+            填了就只按这条意见改，没提到的部分保持原样；留空 = 让 AI 按正文自行重写。
+            重写完成后这段意见会留在框里，方便照着同一条意见再改一次。
+            <span v-if="instructionOver" class="bbi-instruction-over">
+              已超过 {{ MAX_INSTRUCTION }} 字，超出的部分在发给 AI 时会被截断。
+            </span>
           </span>
-        </span>
-      </div>
-      <div class="bbi-rewrite-row">
-        <button
-          v-if="!rewriting"
-          class="bbi-btn bbi-btn-sm"
-          type="button"
-          :disabled="busy || !configured"
-          :title="
-            configured
-              ? '让 AI 重读本楼正文，把这一张的提示词重写一遍（按上面的修改意见改）'
-              : '请先在柏宝绘「渠道」页完成配置'
-          "
-          @click="rewrite"
-        >
-          <Icon name="sparkles" /> AI 重写提示词
-        </button>
-        <template v-else>
-          <span class="bbi-rewrite-busy">
-            <span class="bbi-rewrite-spin" />
-            AI 正在重写提示词…
-          </span>
-          <button class="bbi-btn bbi-btn-sm" type="button" @click="emit('cancel-rewrite')">
-            取消重写
+        </div>
+        <div class="bbi-rewrite-row">
+          <button
+            v-if="!rewriting"
+            class="bbi-btn bbi-btn-sm"
+            type="button"
+            :disabled="busy || !configured"
+            :title="
+              configured
+                ? '让 AI 重读本楼正文，把这一张的提示词重写一遍（按上面的修改意见改）'
+                : '请先在柏宝绘「渠道」页完成配置'
+            "
+            @click="rewrite"
+          >
+            <Icon name="sparkles" /> AI 重写提示词
           </button>
+          <template v-else>
+            <span class="bbi-rewrite-busy">
+              <span class="bbi-rewrite-spin" />
+              AI 正在重写提示词…
+            </span>
+            <button class="bbi-btn bbi-btn-sm" type="button" @click="emit('cancel-rewrite')">
+              取消重写
+            </button>
+          </template>
+        </div>
+        <p v-if="rewriting" class="bbi-editor-note">
+          重写完成后会直接保存并按新提示词出图，结果填回下面的输入框。
+          现在关掉这个窗口也不会中断，回头再打开还能看到进度。
+        </p>
+        <!-- 已落盘却没关窗:下面的输入框与「用户自己打了一半」长得一样,不说清哪份已生效,
+             用户会以为还得再点一次「应用」(或反过来以为草稿也存了)。 -->
+        <p v-else-if="rewritten" class="bbi-editor-note">
+          AI 重写完成，新提示词已保存并开始出图，下面填的就是它。还想再调整就直接改，改完点「应用」。
+        </p>
+      </template>
+      <p v-else class="bbi-editor-note">
+        当前渠道是「DSH 写手」：成品提示词由 DSH 侧按配置集现写，柏宝绘不拼串，所以这里没有「AI 重写提示词」。
+        <template v-if="dshSlot">要改画面就改下面的「画面描述」——那是交给它的委托书。</template>
+        <template v-else>
+          这张卡片还没有画面描述，DSH 只能拿它的 tag 当散文用；想让写手按配置集写串，
+          需要主模型按世界书条目先写一条占位。
         </template>
+      </p>
+
+      <!-- DSH 写手:这条渠道的「提示词」就是 <dsh> 里的三行委托书(成品串由 DSH 侧写),
+           故它在这里与 tag 同等可编辑。放在 tag 之前:占位卡片的 tag 本就是空的,
+           先看见的就是真正决定画面的那一段。 -->
+      <div v-if="dshSlot" class="bbi-modal-field">
+        <span class="bbi-modal-label">画面描述(DSH 写手委托书 · 三行)</span>
+        <BbiTextarea
+          v-model="dsh"
+          class="bbi-prompt-area"
+          :rows="3"
+          :max-rows="10"
+          placeholder="人物名称：林夏&#10;人物服装：米色长风衣，右手收着黑伞&#10;场景描述：深夜的便利店门口，她侧身回头把湿发别到耳后，冷白灯从右侧打来"
+        />
+        <div class="bbi-dsh-tools">
+          <button
+            class="bbi-btn bbi-btn-sm"
+            type="button"
+            :disabled="!dshParts.complete"
+            :title="
+              dshParts.complete
+                ? '把三行的标签顺序、冒号、行内空白拉直（内容一个字不改）'
+                : '三行标签不齐（人物名称 / 人物服装 / 场景描述），整理不会改写内容'
+            "
+            @click="tidyDsh"
+          >
+            <Icon name="sparkles" /> 按三行整理
+          </button>
+          <span class="bbi-field-hint">
+            换行原样保留，三行就是格式本身，空行会被丢掉。DSH 拿这三行按配置集写成成品串。
+            <template v-if="dshChannel">
+              走 DSH 写手渠道时只读它们（外加下面的负面词与画幅方向），
+              tag / 自然语言 / 角色提示词不参与出图。
+            </template>
+          </span>
+        </div>
       </div>
-      <p v-if="rewriting" class="bbi-editor-note">
-        重写完成后会直接保存并按新提示词出图，结果填回下面的输入框。
-        现在关掉这个窗口也不会中断，回头再打开还能看到进度。
-      </p>
-      <!-- 已落盘却没关窗:下面的输入框与「用户自己打了一半」长得一样,不说清哪份已生效,
-           用户会以为还得再点一次「应用」(或反过来以为草稿也存了)。 -->
-      <p v-else-if="rewritten" class="bbi-editor-note">
-        AI 重写完成，新提示词已保存并开始出图，下面填的就是它。还想再调整就直接改，改完点「应用」。
-      </p>
 
       <div class="bbi-modal-field">
         <span class="bbi-modal-label">画面 tag(danbooru 短 tag,逗号分隔)</span>
@@ -537,6 +619,19 @@ onBeforeUnmount(() => {
 .bbi-char-add {
   align-self: flex-start;
   margin-top: 8px;
+}
+
+/* —— DSH 画面描述:按钮与说明并排,窄屏换行(说明太长,横排会挤成一列字) —— */
+.bbi-dsh-tools {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.bbi-dsh-tools .bbi-field-hint {
+  flex: 1 1 240px;
+  min-width: 0;
 }
 
 /* —— AI 重写行:钉在标题下方,与下面的字段区拉开 —— */

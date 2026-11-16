@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { injectImageTags, parseImagePlan as parseImagePlanWithRange } from '@/autoTag/protocol';
+import {
+  injectImageTags,
+  parseDshPlan,
+  parseImagePlan as parseImagePlanWithRange,
+} from '@/autoTag/protocol';
 
 const segments = [
   { id: 'P1', sourceLine: 0, text: '第一幕结束' },
@@ -360,5 +364,89 @@ describe('changes parsing', () => {
       images: [],
       changes: [],
     });
+  });
+});
+
+describe('DSH 画面占位协议', () => {
+  const three = '人物名称：林夏\n人物服装：米色长风衣，右手收着黑伞\n场景描述：深夜的便利店门口，她侧身回头';
+
+  it('把三行原样解析出来，并按 P 编号落到原始行号', () => {
+    const raw = JSON.stringify({
+      images: [{ position: 'P1', dsh: three, size: 'landscape' }],
+    });
+    expect(parseDshPlan(raw, segments, 0, 2)).toEqual([
+      { position: 'P1', sourceLine: 0, dsh: three, size: 'landscape' },
+    ]);
+  });
+
+  it('换行是内容：CRLF、首尾空白与空行归一，但行结构不许折掉', () => {
+    const raw = JSON.stringify({
+      images: [{ position: 'P1', dsh: '  人物名称：林夏\r\n\r\n人物服装：长风衣  \n场景描述：回头  ' }],
+    });
+    expect(parseDshPlan(raw, segments, 0, 1)[0].dsh).toBe(
+      '人物名称：林夏\n人物服装：长风衣\n场景描述：回头',
+    );
+  });
+
+  it('缺 dsh / 空 dsh / 位置不在目标正文里都抛错，交给 runner 重试', () => {
+    expect(() => parseDshPlan('{"images":[{"position":"P1"}]}', segments, 0, 2)).toThrow(
+      'images[0].dsh 不能为空',
+    );
+    expect(() => parseDshPlan('{"images":[{"position":"P1","dsh":"   "}]}', segments, 0, 2)).toThrow(
+      '不能为空',
+    );
+    expect(() =>
+      parseDshPlan(JSON.stringify({ images: [{ position: 'P9', dsh: three }] }), segments, 0, 2),
+    ).toThrow('不在目标正文可选位置中');
+  });
+
+  it('容忍模型把正文塞进 tag/scene 键，但拒绝任何子标签', () => {
+    expect(
+      parseDshPlan('{"images":[{"position":"P2","scene":"人物名称：A"}]}', segments, 0, 2)[0].dsh,
+    ).toBe('人物名称：A');
+    expect(() =>
+      parseDshPlan(
+        JSON.stringify({ images: [{ position: 'P2', dsh: '人物名称：A<size>portrait</size>' }] }),
+        segments,
+        0,
+        2,
+      ),
+    ).toThrow('不得包含');
+  });
+
+  it('数量口径与 tag 协议一致：超上限截断，少于下限抛错，size 认不出降级竖屏', () => {
+    const raw = JSON.stringify({
+      images: [
+        { position: 'P1', dsh: three },
+        { position: 'P2', dsh: three },
+      ],
+    });
+    expect(parseDshPlan(raw, segments, 0, 1)).toHaveLength(1);
+    expect(() => parseDshPlan(raw, segments, 3, 3)).toThrow('少于设置的最少图片数 3');
+    expect(
+      parseDshPlan('{"images":[{"position":"P1","dsh":"人物名称：A","size":"随便"}]}', segments, 0, 1)[0]
+        .size,
+    ).toBe('portrait');
+  });
+
+  it('写回时是一条纯占位：空 tag + dsh + size，没有多余的子标签', () => {
+    const images = parseDshPlan(
+      JSON.stringify({ images: [{ position: 'P1', dsh: three, size: 'landscape' }] }),
+      segments,
+      0,
+      1,
+    ).map(item => ({
+      position: item.position,
+      sourceLine: item.sourceLine,
+      tag: '',
+      dsh: item.dsh,
+      nl: '',
+      negative: '',
+      characters: [],
+      size: item.size,
+    }));
+    expect(injectImageTags('第一行', images)).toBe(
+      '第一行\n<bbi_image><dsh>' + three + '</dsh><size>landscape</size></bbi_image>',
+    );
   });
 });

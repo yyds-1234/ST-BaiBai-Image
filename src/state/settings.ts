@@ -1451,6 +1451,17 @@ export interface AutoTagPrompts {
   mossAnimeSpec: string;
   /** MOSS 动漫线思维链;与 mossAnimeSpec 配套,留空回落内置默认(DEFAULT_MOSS_ANIME_THINKING)。 */
   mossAnimeThinking: string;
+  /**
+   * DSH 写手渠道「手动生成画面占位」的委托单规范;留空回落内置默认
+   * (DEFAULT_DSH_PLACEHOLDER_SPEC,见 autoTag/dshPlaceholder.ts)。
+   *
+   * 内置默认里嵌着世界书占位协议**原文**:世界书条目、面板「复制世界书条目」、这条请求
+   * 三处共用同一份格式定义。用户改这一格 = 换委托书的写法;数量 / 位置 / JSON 形状那一半
+   * 仍由代码追加(必须与解析器同源)。
+   *
+   * 只在 DSH 渠道的手动补写里用:自动 tag 链路与「AI 重写提示词」不看它。
+   */
+  dshSpec: string;
 }
 
 export interface ImageSettings {
@@ -1677,6 +1688,7 @@ function defaults(): ImageSettings {
         mossThinking: '',
         mossAnimeSpec: '',
         mossAnimeThinking: '',
+        dshSpec: '',
       },
     },
     excludes: excludesDefaults(),
@@ -2386,6 +2398,7 @@ function normalize(raw: unknown): ImageSettings {
         mossThinking: typeof rp.mossThinking === 'string' ? rp.mossThinking : '',
         mossAnimeSpec: typeof rp.mossAnimeSpec === 'string' ? rp.mossAnimeSpec : '',
         mossAnimeThinking: typeof rp.mossAnimeThinking === 'string' ? rp.mossAnimeThinking : '',
+        dshSpec: typeof rp.dshSpec === 'string' ? rp.dshSpec : '',
       };
     })(),
   };

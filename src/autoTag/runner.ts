@@ -5,10 +5,10 @@ import {
   resolveCharAnchors,
   type PositionedCharOp,
 } from '@/autoTag/charAnchors';
-import { prepareTargetText } from '@/autoTag/clean';
+import { prepareTargetText, type PreparedTargetText } from '@/autoTag/clean';
 import { auditLayers, formatLayerAudits, repairTagAges } from '@/autoTag/dupes';
 import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/generationGate';
-import { autoTagProfile, buildAutoTagMessages } from '@/autoTag/prompt';
+import { autoTagProfile, buildAutoTagMessages, buildDshPlaceholderMessages } from '@/autoTag/prompt';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
 import { auditFrames, formatFrameAudits } from '@/autoTag/shotspec';
 import { buildSlotTaskNote } from '@/autoTag/slotPlan';
@@ -26,14 +26,21 @@ import {
   type CharTagAutoOp,
   type CharTagField,
 } from '@/state/charTags';
-import { injectImageTags, parseImagePlan, type ImagePlan } from '@/autoTag/protocol';
+import {
+  injectImageTags,
+  parseDshPlan,
+  parseImagePlan,
+  type DshInsertion,
+  type ImageInsertion,
+  type ImagePlan,
+} from '@/autoTag/protocol';
 import {
   clearAutoGenerateForFloor,
   consumeAutoGenerate,
   markForAutoGenerate,
 } from '@/floor/autoGenerate';
 import { applyMessageText, type ApplyMessageResult } from '@/st/messageEdit';
-import { getContext, isAiStoryMessage, type STMessage } from '@/st/context';
+import { getContext, isAiStoryMessage, type STContext, type STMessage } from '@/st/context';
 import {
   hasImageTagTrace,
   parseImageTags,
@@ -212,16 +219,23 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     abort(floor, 'chat-excluded', opts.manual, '该角色已被排除，不生成生图 tag');
     return;
   }
-  // DSH 写手渠道下,占位由**主模型**自己写(autoTag/dshPlaceholder.ts 的世界书条目),
-  // 柏宝绘再发一次 LLM 请求去写 tag 是纯浪费:那一轮请求产出的 tag 插不进占位模式,
-  // 而用户点「生成」要的是把 <dsh> 交给 DSH。手动按钮也一并拦下并说清原因——
-  // 静默不做事在用户那里就是「按钮坏了」。
-  if (settings.defaultBackend === 'dshbridge') {
+  // DSH 写手渠道:占位平时由**主模型**自己写(autoTag/dshPlaceholder.ts 的世界书条目),
+  // 自动流程再发一次请求是纯浪费 —— 那轮请求产出的 tag 插不进占位模式。
+  // 但**手动按钮要能补写**:换过模型、导入旧聊天、或某轮模型没写时,用户得有个入口把这一楼
+  // 的画面补成一条委托单。故手动触发走下面那条独立的占位链路(runDshPlaceholder),
+  // 自动触发仍然什么都不做。
+  const dshChannel = settings.defaultBackend === 'dshbridge';
+  if (dshChannel && !opts.manual) {
+    diagnostic('runForFloor:skip', { floor, reason: 'dsh-bridge-auto' });
+    return;
+  }
+  // 单槽重写重写的是 tag,这条渠道根本没有 tag:入口在提示词编辑弹窗,说清楚比静默强。
+  if (dshChannel && opts.slot) {
     abort(
       floor,
-      'dsh-bridge-mode',
-      opts.manual,
-      '当前是「DSH 写手」渠道，画面占位由主模型按世界书条目写入，不需要自动生成 tag',
+      'dsh-no-slot',
+      true,
+      '「DSH 写手」渠道没有可重写的 tag：画面描述请用卡片上的「编辑提示词」改',
     );
     return;
   }
@@ -316,6 +330,23 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
   running.set(runKey, controller);
 
   try {
+    // DSH 写手渠道:到此为止的闸门(正文清洗、已有 tag、空正文、段落快照)与 tag 链路完全共用,
+    // 差异只在"往外要什么、往正文写什么"。两条链路共用这一套前置检查是刻意的:
+    // 分开写迟早出现"按钮能点、点下去却说这一楼不可写"这种两侧判据不一致。
+    if (dshChannel) {
+      await runDshPlaceholder({
+        floor,
+        context,
+        message,
+        preparedTarget,
+        chatId,
+        swipeId,
+        identity,
+        controller,
+        replace: Boolean(opts.replace),
+      });
+      return;
+    }
     const memory = readBookMemory(floor, context.chat[floor]?.mes ?? '', context.name1);
     // 单槽重写:库文本要包含本楼已落档的增量(首次全量分析建的档),否则 AI 会把
     // 已建档角色当新人重写。charTagsBeforeFloor(floor + 1) 正好含本楼(swipe 匹配时生效)。
@@ -669,6 +700,170 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     toastr.error(message, '柏宝绘自动 tag 失败');
   } finally {
     if (running.get(runKey) === controller) running.delete(runKey);
+  }
+}
+
+/** 放弃写入画面占位时给用户的说法(与 ABANDON_REASON 分开:那些文案都在说「生图 tag」)。 */
+const DSH_ABANDON_REASON: Partial<Record<ApplyMessageResult, string>> = {
+  'chat-changed': '已切换聊天，本次没有写入画面占位',
+  'floor-changed': '该楼层已被删除或替换，本次没有写入画面占位',
+  'swipe-changed': '已切换 swipe，本次没有写入画面占位',
+  'build-failed': '楼层正文已被大幅改写（或期间已出现生图占位），本次没有写入',
+  unavailable: '当前聊天不可写入，本次没有写入画面占位',
+};
+
+interface DshPlaceholderRun {
+  floor: number;
+  context: STContext;
+  /** 请求开始时的消息快照:身份 CAS 与 swipe 判断都用它。 */
+  message: STMessage;
+  /** 剔除旧 tag 后的正文(写回基底以落盘那一刻的正文另算)。 */
+  preparedTarget: PreparedTargetText;
+  chatId: string;
+  swipeId: number | null;
+  /** 与 tag 链路的 processed 去重键同构。 */
+  identity: string;
+  controller: AbortController;
+  /** 本楼已有占位/标签 → 用户已确认重新生成:写回前先剔除旧的。 */
+  replace: boolean;
+}
+
+/**
+ * DSH 写手渠道的「手动生成画面占位」。
+ *
+ * 与 tag 链路只差**输出物**:写回正文的不是 danbooru tag,而是一条
+ * <bbi_image><dsh>三行</dsh><size>…</size></bbi_image> 委托单 —— 成品提示词由 DSH 侧
+ * 按它的配置集现写(见 docs/DSH-BRIDGE-PROTOCOL.md)。请求、重试、按落盘时刻的真实正文
+ * 重定位位置、自动出图标记全部与 tag 链路同口径:这些地方各写一份,迟早会漂(最典型的是
+ * 重试次数,以及「分析期间正文被别的插件改过」的处理)。
+ *
+ * 不落角色档案增量:那条线的长相归 DSH 侧档案与柏宝绘的档案映射,本流程只写画面。
+ */
+async function runDshPlaceholder(run: DshPlaceholderRun): Promise<void> {
+  const { floor, context, message, preparedTarget, chatId, swipeId, identity, controller } = run;
+  const options = settings.autoTag;
+  const channel = getTagGenChannel();
+  const retries = Math.max(0, Math.floor(Number(options.retryCount) || 0));
+  let plan: DshInsertion[] | null = null;
+  let lastError = '';
+  try {
+    const memory = readBookMemory(floor, context.chat[floor]?.mes ?? '', context.name1);
+    const messages = await buildDshPlaceholderMessages(context, floor, options, memory, preparedTarget);
+    for (let attempt = 0; attempt <= retries && !plan; attempt += 1) {
+      if (controller.signal.aborted) {
+        processed.delete(identity);
+        return;
+      }
+      try {
+        // parsed 用对象壳装着:validate 闭包写入,await 之后读取(同 tag 链路,TS 收窄看不见闭包赋值)
+        const parsed: { plan: DshInsertion[] | null } = { plan: null };
+        const validate = (raw: string) => {
+          parsed.plan = parseDshPlan(
+            raw,
+            preparedTarget.segments,
+            options.minImages,
+            options.maxImages,
+          );
+        };
+        const source =
+          retries > 0
+            ? `画面占位(第 ${floor} 楼 · 第 ${attempt + 1} 次)`
+            : `画面占位(第 ${floor} 楼)`;
+        if (channel) {
+          await requestCompletion(channel, messages, {
+            signal: controller.signal,
+            source,
+            validate,
+          });
+        } else {
+          await requestViaMainApi(messages, { signal: controller.signal, source, validate });
+        }
+        if (controller.signal.aborted) {
+          processed.delete(identity);
+          return;
+        }
+        plan = parsed.plan;
+      } catch (error) {
+        if (controller.signal.aborted) {
+          processed.delete(identity);
+          return;
+        }
+        lastError = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[柏宝绘] 第 ${floor} 楼第 ${attempt + 1}/${retries + 1} 次生成画面占位失败`,
+          error,
+        );
+      }
+    }
+    if (!plan) {
+      processed.delete(identity);
+      toastr.error(
+        `${lastError}${retries > 0 ? `(已自动重试 ${retries} 次)` : ''}`,
+        '柏宝绘画面占位失败',
+      );
+      return;
+    }
+
+    // 空 tag + dsh = 一条纯占位(序列化见 st/imageTagRegex 的 serializeImageTag)。
+    const images: ImageInsertion[] = plan.map(item => ({
+      position: item.position,
+      sourceLine: item.sourceLine,
+      tag: '',
+      dsh: item.dsh,
+      nl: '',
+      negative: '',
+      characters: [],
+      size: item.size,
+    }));
+    if (!images.length) {
+      toastr.info('模型认为本楼没有值得插图的画面', '柏宝绘');
+      return;
+    }
+
+    // 标记必须挂在写回**之前**:写回即触发重水合,卡片挂载时消费标记(同 tag 链路)。
+    const markSwipeId = message.swipe_id ?? 0;
+    const marked = Boolean(options.autoGenerate);
+    if (marked) {
+      for (let seq = 0; seq < images.length; seq += 1) {
+        markForAutoGenerate(chatId, floor, markSwipeId, seq);
+      }
+    }
+    const result = await applyMessageText(
+      floor,
+      currentText => {
+        // 请求期间别的流程已经贴过占位/标签:再注一条就是重复,交回 build-failed 走放弃分支
+        if (!run.replace && hasImageTagTrace(currentText)) return null;
+        const base = run.replace ? stripImageTags(currentText) : currentText;
+        // 落点按落盘时刻的真实正文重算(别的插件在分析期间翻译/润色都不丢位置)
+        const rebased = rebaseImagePositions(
+          base,
+          preparedTarget.segments,
+          images,
+          settings.excludes.customStripTags,
+        );
+        if (!rebased) return null;
+        return injectImageTags(base, rebased.images);
+      },
+      chatId,
+      swipeId,
+      message,
+    );
+    if (result === 'saved') {
+      toastr.success(
+        `已在第 ${floor} 楼插入 ${images.length} 条画面占位` + (marked ? '，正在交给 DSH 写手出图' : ''),
+        '柏宝绘',
+      );
+      return;
+    }
+    if (marked) clearAutoGenerateForFloor(chatId, floor);
+    console.info(`[柏宝绘] 第 ${floor} 楼放弃写入画面占位：${result}`);
+    toastr.warning(DSH_ABANDON_REASON[result] ?? '本次没有写入画面占位', '柏宝绘');
+  } catch (error) {
+    processed.delete(identity);
+    if (controller.signal.aborted) return;
+    const text = error instanceof Error ? error.message : String(error);
+    console.error(`[柏宝绘] 第 ${floor} 楼生成画面占位失败`, error);
+    toastr.error(text, '柏宝绘画面占位失败');
   }
 }
 

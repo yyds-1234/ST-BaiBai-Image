@@ -1,6 +1,6 @@
 import { normalizeOrientation, type Orientation } from '@/backends/size';
 import type { TargetSegment } from '@/autoTag/clean';
-import { FORBIDDEN_SUBTAG, serializeImageTag } from '@/st/imageTagRegex';
+import { FORBIDDEN_SUBTAG, normalizeDshText, serializeImageTag } from '@/st/imageTagRegex';
 import {
   CHAR_TAG_FIELDS,
   type CharTagField,
@@ -27,6 +27,13 @@ export interface ImageInsertion {
   characters: ImageCharacterPrompt[];
   /** 画幅方向:模型只判横/竖,具体像素由用户在后端面板配置。漏给/乱给一律降级竖屏。 */
   size: Orientation;
+  /**
+   * DSH 写手渠道的画面委托单正文(三行中文;换行是格式本身)。
+   *
+   * 只在这条渠道「手动生成画面占位」时出现,tag 渠道的图恒不带它。序列化时紧跟 tag
+   * (见 st/imageTagRegex.ts 的 serializeImageTag),于是空 tag + dsh 是一条纯占位。
+   */
+  dsh?: string;
 }
 
 export interface ImagePlan {
@@ -220,6 +227,80 @@ export function parseImagePlan(
     images: limitedImages,
     changes: parseChanges(parsed.changes, positions),
   };
+}
+
+/** 一条 DSH 画面占位(手动生成链路专用:这条渠道没有 tag,委托书正文就是全部内容)。 */
+export interface DshInsertion {
+  position: string;
+  sourceLine: number;
+  /** 三行委托书,换行原样保留(与 tag/nl 的折行口径不同,见 sanitizeDsh)。 */
+  dsh: string;
+  size: Orientation;
+}
+
+/**
+ * dsh 正文的清理。**刻意不折行**:三行是格式本身(人物名称 / 人物服装 / 场景描述),
+ * 折成一行等于把信息糊在一起。归一交给 normalizeDshText,与 parseImageTagContent 同一份。
+ */
+function sanitizeDsh(value: unknown, index: number): string {
+  const text = typeof value === 'string' ? normalizeDshText(value) : '';
+  if (text && FORBIDDEN_SUBTAG.test(text)) {
+    throw new Error(`images[${index}].dsh 不得包含 bbi_image/tag/nl/negative/size/dsh 标签`);
+  }
+  return text;
+}
+
+/**
+ * 解析「画面占位」请求的输出:{"images":[{"position":"P2","dsh":"三行","size":"portrait"}]}。
+ *
+ * 与 parseImagePlan 是**两条协议**,不能合并:tag 那条要求 tag 必填且禁止子标签,
+ * 而这条的标志恰恰是三行中文正文。共用一份解析器就要在两处放行各自禁止的东西,
+ * 两边都会松掉。
+ *
+ * 容忍口径与 parseImagePlan 一致:数量越界才抛(交给 runner 重试),单个字段坏就说明白
+ * 哪一条坏;size 一律归一,认不出就竖屏——为它吃掉一次重试不值。
+ */
+export function parseDshPlan(
+  raw: string,
+  segments: TargetSegment[],
+  minImages: number,
+  maxImages: number,
+): DshInsertion[] {
+  const parsed = parseObject(raw);
+  if (!Array.isArray(parsed.images)) throw new Error('AI 返回的 JSON 缺少 images 数组');
+  const normalizedMax = Math.max(1, Math.floor(Number(maxImages)) || 1);
+  const normalizedMin = Math.min(
+    normalizedMax,
+    Math.max(0, Math.floor(Number(minImages)) || 0),
+  );
+  const positions = new Map(segments.map(segment => [segment.id, segment.sourceLine]));
+
+  const images: DshInsertion[] = [];
+  for (let index = 0; index < parsed.images.length; index += 1) {
+    const item = parsed.images[index];
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error(`images[${index}] 必须是对象`);
+    }
+    const entry = item as Record<string, unknown>;
+    const position = sanitizePosition(entry.position ?? entry.id, index);
+    const sourceLine = positions.get(position);
+    if (sourceLine === undefined) {
+      throw new Error(`images[${index}].position=${position} 不在目标正文可选位置中`);
+    }
+    // 兼容模型换个键名/顺手写成 tag 的情况:内容仍是那三行,不该因此作废整次输出
+    const dsh = sanitizeDsh(entry.dsh ?? entry.scene ?? entry.prompt, index);
+    if (!dsh) throw new Error(`images[${index}].dsh 不能为空`);
+    const size = normalizeOrientation(entry.size ?? entry.orientation ?? entry.aspect);
+    images.push({ position, sourceLine, dsh, size });
+  }
+
+  const limited = images.slice(0, normalizedMax);
+  if (limited.length < normalizedMin) {
+    throw new Error(
+      `AI 返回了 ${limited.length} 条画面占位，少于设置的最少图片数 ${normalizedMin}`,
+    );
+  }
+  return limited;
 }
 
 /**

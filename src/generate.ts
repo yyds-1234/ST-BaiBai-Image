@@ -72,6 +72,14 @@ export interface GenerateInput {
    */
   dsh?: string;
   /**
+   * 剧情上下文（DSH 写手渠道，桥接 2.23.0）：从**上一条占位**到这一条之间的正文，≤500 字。
+   *
+   * 由调用方（卡片）在点下去那一刻从聊天快照里取（`autoTag/dshStory.ts` 的 collectDshStory）：
+   * 本模块刻意不认识楼层坐标，正文也可能刚被改过，快照留在这里算就等于让「剧情」跟着卡片一起老。
+   * 只有 dshbridge 渠道会发出去；其余后端忽略。
+   */
+  dshStory?: string;
+  /**
    * 角色外貌（柏宝绘的角色库认出来的在场角色，按出场顺序）。
    *
    * **角色由柏宝绘管理**：它看得见正文、知道这一轮谁在场、长什么样，直接把外貌串交给 DSH。
@@ -370,6 +378,8 @@ export async function generateImage(
         conn,
         {
           scene,
+          // 剧情上下文（桥接 2.23.0）：只给写手理解前因，不进画面串 —— 见 autoTag/dshStory.ts 的文件头。
+          story: input.dshStory,
           // 两条角色通道并行（协议 §3.1）：映射过的人按名字去 DSH 档案里查（能用 LoRA / line 门禁），
           // 没映射的人由柏宝绘把自己的块交过去。空清单整个字段不发 —— 发了等于声明「这批角色没长相」。
           characters: input.dshCharacters?.length ? input.dshCharacters : undefined,

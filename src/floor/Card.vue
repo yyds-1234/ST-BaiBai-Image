@@ -44,6 +44,7 @@ import { copyText } from '@/st/clipboard';
 import { getContext } from '@/st/context';
 import { formatPromptText } from '@/st/imageTagRegex';
 import { describeDshPlaceholder, isDshPlaceholder } from '@/autoTag/dshPlaceholder';
+import { collectDshStory } from '@/autoTag/dshStory';
 
 /**
  * 楼层生图卡片(DESIGN-FLOOR-UI.md §8)。
@@ -331,6 +332,14 @@ async function generate(): Promise<void> {
     characters: props.characters.map(character => ({ ...character })),
     size: effectiveSize.value,
     dsh: props.dsh,
+    // 剧情传递（桥接 2.23.0）：从**上一条占位**到这一条之间的正文，≤500 字（见 autoTag/dshStory.ts）。
+    // 现取自点下去这一刻的聊天，而不是占位写进正文时固化：正文可能被改过、被 swipe 过，
+    // 写手该看的是用户此刻眼前那一版。取不到就发空（字段整个不发，老行为不变）。
+    dshStory: dshActive.value
+      ? collectDshStory(getContext()?.chat ?? [], props.messageId, props.seq, {
+        stripTags: settings.excludes.customStripTags,
+      }).text
+      : undefined,
     dshCharacters: dshPlan.characters,
     dshRoles: dshPlan.roles,
     // 自动认角色（协议 §3.1，桥接 2.14.0）：这一单里没映射命中的人，让 DSH 自己从占位正文里认人。
@@ -530,7 +539,7 @@ function openEditor(): void {
       seq: props.seq,
       rawTag: props.tag,
     },
-    // dsh 必须原样带回:弹窗只编辑五个结构化字段,没给编辑的也照样写回,
+    // dsh 必须带进来:占位卡片上它才是真正决定画面的那一段(弹窗里可编辑,见 PromptEditor)。
     // 漏了它等于「打开看一眼再保存」就把这条占位降级成空 tag(promptHash 也跟着变)
     content: {
       tag: props.prompt,
