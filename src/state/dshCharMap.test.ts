@@ -55,6 +55,12 @@ describe('normalizeDshCharMappings:设置里存的那张表', () => {
     expect(normalizeDshCharMappings(rows.map(r => ({ ...r, name: 'x'.repeat(100) })))[0].name).toHaveLength(24);
   });
 
+  it('别名去空白 / 去重 / 丢掉与主名相同的那个', () => {
+    const list = normalizeDshCharMappings([
+      { name: '甘雨', kind: 'catalog', ref: 'ganyu (genshin impact)', line: 'moss-anime', aliases: [' Ganyu ', 'Ganyu', '甘雨', '', 42] },
+    ]);
+    expect(list[0].aliases).toEqual(['Ganyu']);
+  });
   it('非数组一律空表(老配置里这个键不存在)', () => {
     expect(normalizeDshCharMappings(undefined)).toEqual([]);
     expect(normalizeDshCharMappings(null)).toEqual([]);
@@ -148,6 +154,42 @@ describe('planDshCharacters:出图前算「谁按档案画、谁按角色库画�
     expect(plan.characters).toEqual(['小雪：30-岳母']);
   });
 
+  it('一行带别名:占位里写别名也认得出，发出去的是主名（动漫角色不必再开两行）', () => {
+    const plan = planDshCharacters({
+      text: '人物名称：Ganyu与甘雨',
+      roles: [],
+      mappings: [
+        { name: '甘雨', kind: 'catalog', ref: 'ganyu (genshin impact)', line: 'moss-anime', aliases: ['Ganyu'] },
+      ],
+      line: 'moss-anime',
+    });
+    // 两种写法同时出现也只发一条（同一个人），显示名永远是主名。
+    expect(plan.characters).toEqual(['甘雨：ganyu (genshin impact)']);
+  });
+
+  it('只写了别名 → 仍然按那一行发（主名不必出现在占位里）', () => {
+    const plan = planDshCharacters({
+      text: '人物名称：Ganyu',
+      roles: [],
+      mappings: [
+        { name: '甘雨', kind: 'catalog', ref: 'ganyu (genshin impact)', line: 'moss-anime', aliases: ['Ganyu'] },
+      ],
+      line: 'moss-anime',
+    });
+    expect(plan.characters).toEqual(['甘雨：ganyu (genshin impact)']);
+  });
+
+  it('别名也被算作「已认领的写法」：不会再发成裸名字', () => {
+    const plan = planDshCharacters({
+      text: '人物名称：Ganyu',
+      roles: [],
+      mappings: [
+        { name: '甘雨', kind: 'catalog', ref: 'ganyu (genshin impact)', line: 'moss-anime', aliases: ['Ganyu'] },
+      ],
+      line: 'moss-anime',
+    });
+    expect(plan.characters.filter(item => !item.includes('：'))).toEqual([]);
+  });
   it('空映射表 / 空文本 = 原样不动（老行为逐字不变）', () => {
     expect(planDshCharacters({ text: '林夏', roles, mappings: [], line: 'moss-real' })).toEqual({
       characters: [],

@@ -184,6 +184,26 @@ function removeMapping(index: number): void {
   settings.dshBridge.charMappings.splice(index, 1);
 }
 
+/**
+ * 一行别名（顿号 / 逗号分隔，两种 kind 通用）。
+ *
+ * 为什么不再让人「多加几行指向同一条 ref」：动漫角色没有档案，以前只能那样表达
+ * 「甘雨 / Ganyu 是同一个人」，几条一模一样的行既难维护、删的时候还容易漏。
+ * 现在一行带住：主名决定发出去的「显示名」，别名只参与占位匹配。
+ * 用 change（失焦 / 回车）提交，不是 input —— 边打边拆数组会把光标和顿号一起改写。
+ */
+function onEditAliases(index: number, event: Event): void {
+  const row = settings.dshBridge.charMappings[index];
+  if (!row) return;
+  const value = (event.target as HTMLInputElement).value;
+  const aliases = value
+    .split(/[,，;；、\n]/)
+    .map(item => item.trim())
+    .filter(Boolean);
+  if (aliases.length > 0) row.aliases = aliases;
+  else delete row.aliases;
+}
+
 // ── 编辑档案（桥接 2.28.1）───────────────────────────────────────────────
 //
 // 自动建出来的档案（auto: true）以前只能在 DSH 配置台里改。柏宝绘这边看得见映射、
@@ -541,6 +561,15 @@ async function probeCast(): Promise<void> {
               :aria-label="`第 ${index + 1} 行映射到`"
               @update:model-value="onPickMapping(index, $event)"
             />
+            <input
+              class="bbi-input dsh-map-aliases"
+              type="text"
+              :value="(row.aliases ?? []).join('、')"
+              placeholder="别名（顿号分隔）"
+              spellcheck="false"
+              :aria-label="`第 ${index + 1} 行的别名`"
+              @change="onEditAliases(index, $event)"
+            />
             <button
               v-if="row.kind === 'archive' && row.ref"
               class="bbi-btn dsh-map-edit"
@@ -562,6 +591,10 @@ async function probeCast(): Promise<void> {
           </div>
         </div>
         <p v-else class="bbi-field-hint">还没有映射行：先「拉取档案清单」，再「添加一行」。</p>
+        <p v-if="settings.dshBridge.charMappings.length" class="bbi-field-hint">
+          每行的「别名」是<b>占位里还可能怎么写这个人</b>（顿号分隔，如 <code class="mono">甘雨、Ganyu</code>）。
+          动漫角色与原创角色都适用：发出去的显示名永远是主名，别名只用来认出他。
+        </p>
 
         <div v-if="identityEditor" class="dsh-map-editor">
           <div class="dsh-map-editor-head">
@@ -778,8 +811,8 @@ async function probeCast(): Promise<void> {
 }
 .dsh-map-row {
   display: grid;
-  /* 名字 / 目标 / 编辑（仅档案行有）/ 删除 */
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.6fr) auto 32px;
+  /* 名字 / 目标 / 别名 / 编辑（仅档案行有）/ 删除 */
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.25fr) minmax(0, 0.85fr) auto 32px;
   gap: 8px;
   align-items: center;
 }

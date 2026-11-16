@@ -43,12 +43,24 @@ export interface DshCharMapping {
    * 允许改写它 —— 用户手挑的行永远不动,那是他自己的决定。
    */
   auto?: boolean;
+  /**
+   * 这一行的**其他写法**(2026-11-17):同一行的别名,两种 kind 通用。
+   *
+   * 为什么放在行上而不是靠「多加几行」:动漫角色没有档案,以前只能「加两行指向同一条 ref」
+   * 来表示「甘雨 / Ganyu 是同一个人」—— 用户得自己维护几条长得一样的行,删的时候还得记住
+   * 它们是一伙的。现在一行带住:主名决定发出去的「显示名」,别名只参与占位匹配。
+   * 档案行的别名仍然建议写进档案本身(identities/<id>.md 的 alias 字段,DSH 也认),
+   * 这里多存一份只影响「这一侧认不认得出占位里那个写法」。
+   */
+  aliases?: string[];
 }
 
 /** 映射行数上限。超了手抖加进来的空行会把面板撑满,也会让出图前那次匹配变慢。 */
 export const DSH_CHAR_MAP_MAX = 40;
 /** 名字长度上限(占位里的名字不会更长;挡住把整段正文粘进名字格)。 */
 const NAME_MAX = 24;
+/** 一行最多带几个别名:一个人在同一段占位里被写成四五种样子已经很过分了。 */
+const ALIAS_MAX = 8;
 /** 引用长度上限:动漫表名字最长的一批也在 60 字内。 */
 const REF_MAX = 80;
 
@@ -74,12 +86,22 @@ export function normalizeDshCharMappings(raw: unknown): DshCharMapping[] {
     if (!name || !ref || !kind) continue;
     if (seen.has(name)) continue;
     seen.add(name);
+    // 别名:去空白、去空、去重、去掉与主名相同的那个(留着只会让人以为有两份配置)。
+    const aliases: string[] = [];
+    for (const raw of Array.isArray(o.aliases) ? o.aliases : []) {
+      if (typeof raw !== 'string') continue;
+      const text = raw.trim().slice(0, NAME_MAX);
+      if (!text || text === name || aliases.includes(text)) continue;
+      aliases.push(text);
+      if (aliases.length >= ALIAS_MAX) break;
+    }
     out.push({
       name,
       kind,
       ref,
       line: typeof o.line === 'string' ? o.line.trim() : '',
       ...o.auto === true ? { auto: true } : {},
+      ...aliases.length > 0 ? { aliases } : {},
     });
     if (out.length >= DSH_CHAR_MAP_MAX) break;
   }
@@ -319,14 +341,29 @@ export function planDshCharacters(input: {
   if (!text.trim()) return empty;
 
   // 长名优先命中、短名被长名覆盖:库里同时有「雪」与「小雪」时只留长的那个。
+  // 一行可以带多个写法(name + aliases):动漫角色没有档案,别名就存在这一行里,
+  // 不必再「加两行指向同一条 ref」。
   const hits: { mapping: DshCharMapping; at: number }[] = [];
   const accepted: string[] = [];
+  const claimed = new Set<string>();
   for (const mapping of [...mappings].sort((a, b) => b.name.length - a.name.length)) {
-    const at = text.indexOf(mapping.name);
-    if (at < 0) continue;
-    if (accepted.some(longer => longer.includes(mapping.name))) continue;
-    accepted.push(mapping.name);
-    hits.push({ mapping, at });
+    // 这一行的所有写法:主名在前(它决定发出去的「显示名」),别名只参与匹配。
+    const spellings = [mapping.name, ...(Array.isArray(mapping.aliases) ? mapping.aliases : [])]
+      .map(item => String(item ?? '').trim())
+      .filter(item => item.length > 0);
+    let hit: { at: number; text: string } | null = null;
+    for (const spelling of spellings) {
+      if (claimed.has(spelling)) continue;
+      // 被更长的写法认领过就不再重复认(「小雪」认了,「雪」这个子串不再单独占一位)。
+      if (accepted.some(longer => longer !== spelling && longer.includes(spelling))) continue;
+      const at = text.indexOf(spelling);
+      if (at < 0) continue;
+      if (hit === null || at < hit.at) hit = { at, text: spelling };
+    }
+    if (hit === null) continue;
+    claimed.add(hit.text);
+    accepted.push(hit.text);
+    hits.push({ mapping, at: hit.at });
   }
   hits.sort((a, b) => a.at - b.at);
 
@@ -336,7 +373,12 @@ export function planDshCharacters(input: {
   /** 映射表里出现过这个名字(哪怕因为线不符被跳过):它已经有用户指定的归宿,不许当野名字发。 */
   const mappedNames = new Set<string>();
   for (const { mapping, at } of hits) {
+    // 主名 + 别名都算「这一行已经认领的写法」:它们不许再当野名字发出去,
+    // 也不许再被本地角色库的块顶掉。
     mappedNames.add(mapping.name.trim());
+    for (const alias of Array.isArray(mapping.aliases) ? mapping.aliases : []) {
+      mappedNames.add(String(alias ?? '').trim());
+    }
     const usable = mapping.kind === 'catalog'
       ? mapping.line !== '' && mapping.line === line
       : mapping.line === '' || mapping.line === line;
@@ -345,7 +387,11 @@ export function planDshCharacters(input: {
       continue;
     }
     picked.push({ text: `${mapping.name}：${mapping.ref}`, at });
-    mapped.add(mapping.name);
+    // 主名与别名都记进 mapped:同名的人不再走本地角色库的块(两套长相会打架)。
+    mapped.add(mapping.name.trim());
+    for (const alias of Array.isArray(mapping.aliases) ? mapping.aliases : []) {
+      mapped.add(String(alias ?? '').trim());
+    }
   }
 
   // ② 占位里点名、但**两边都不认识**的人（2026-11-16，桥接 2.25.0）。
