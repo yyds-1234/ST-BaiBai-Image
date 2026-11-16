@@ -171,6 +171,29 @@ export interface DshAutoCast {
   picks: DshAutoCastPick[];
   /** 每一步的说明：谁、认成哪一条、哪条因为歧义被跳过。 */
   notes: string[];
+  /**
+   * 这一单**新建的**档案（桥接 2.24.0）：动漫表里查不到的人，DSH 按正文起草一块外貌、
+   * 写进它自己的 `identities/<id>.md`，再回给这里。
+   *
+   * 客户端要做两件事：① 把 `label → charId` 落进档案映射（下一单直接机械命中，不再起草）；
+   * ② 在卡片上说一句「已自动建档 X」—— 那块是模型起草的，人得知道去哪改（DSH 配置台「角色」页）。
+   * 老插件没有这个字段 → undefined。
+   */
+  created?: DshCreatedIdentity[];
+}
+
+/** 一条自动建档结果（`result.autoCast.created[]`，桥接 2.24.0）。 */
+export interface DshCreatedIdentity {
+  /** 正文里的名字（= picks 里那一项的 label）。 */
+  label: string;
+  /** DSH 侧档案 id（`34-漩涡鸣人`），下一单当 `characters` 的引用发回去。 */
+  charId: string;
+  /** 档案显示名。 */
+  name: string;
+  /** 档案文件路径（DSH 那台机器上的，只用来排障）。 */
+  file: string;
+  /** 起草出来的形象块长度（字符）。 */
+  blockChars: number;
 }
 
 /** 一条结构化的认人结果（`result.autoCast.picks[]`）。 */
@@ -190,6 +213,8 @@ export interface DshAutoCastPick {
    * 老插件（2.15.0）没有这个字段 → 空串（动漫角色退回本单的 result.line）。
    */
   line: string;
+  /** 这一条是不是本单刚自动建档出来的（桥接 2.24.0）。 */
+  created?: boolean;
 }
 
 /** `POST /cast/detect` 的结果（协议 §4.6）：只认人，不出图、不写串。 */
@@ -206,6 +231,8 @@ export interface DshCastDetectResult {
   notes: string[];
   /** 这条线有没有动漫表：false = 只可能认档案（面板据此换提示文案）。 */
   catalog: boolean;
+  /** 这一趟新建的档案（桥接 2.24.0；只有请求里带 create: true 才可能非空）。 */
+  created?: DshCreatedIdentity[];
 }
 
 /** 轮询进度(卡片用它换阶段文案;不关心就整个不传)。 */
@@ -572,7 +599,7 @@ export async function searchDshCatalog(
  */
 export async function detectDshCast(
   conn: DshBridgeConn,
-  values: { scene: string; configSet?: string; autoCast?: boolean },
+  values: { scene: string; configSet?: string; autoCast?: boolean; create?: boolean },
   signal?: AbortSignal,
 ): Promise<DshCastDetectResult> {
   const scene = (values.scene ?? '').trim();
@@ -581,6 +608,8 @@ export async function detectDshCast(
     scene,
     ...values.configSet?.trim() ? { configSet: values.configSet.trim() } : {},
     ...values.autoCast === undefined ? {} : { autoCast: values.autoCast },
+    // 查表 miss 时顺带建档（2.24.0）：面板「试跑」默认不带，避免点一下看一眼就往磁盘写文件。
+    ...values.create === true ? { create: true } : {},
   }, signal);
   return {
     line: typeof body.line === 'string' ? body.line : '',
@@ -594,6 +623,8 @@ export async function detectDshCast(
       ? body.notes.filter((x): x is string => typeof x === 'string' && !!x.trim())
       : [],
     catalog: body.catalog === true,
+    // 试跑也带了「创建档案」开关（桥接 2.24.0）；没开 / 老插件时这里是空数组。
+    ...createdIdentitiesOf(body.created).length > 0 ? { created: createdIdentitiesOf(body.created) } : {},
   };
 }
 
@@ -829,6 +860,7 @@ function autoCastPicksOf(raw: unknown): DshAutoCastPick[] {
       source: typeof o.source === 'string' ? o.source : '',
       // 老插件不带 line：留空串，由调用方按「动漫 ↔ result.line、档案 ↔ 通用」兜底。
       line: typeof o.line === 'string' ? o.line.trim() : '',
+      ...o.created === true ? { created: true } : {},
     });
   }
   return out;
@@ -841,7 +873,9 @@ function autoCastOf(raw: unknown): DshAutoCast | undefined {
   const characters = Array.isArray(item.characters)
     ? item.characters.filter((x): x is string => typeof x === 'string' && !!x.trim())
     : [];
-  if (characters.length === 0) return undefined;
+  const created = createdIdentitiesOf(item.created);
+  // characters 为空但有新建档案时也要保留：那种单子认到的人已经全进了档案，账不能丢。
+  if (characters.length === 0 && created.length === 0) return undefined;
   return {
     source: typeof item.source === 'string' ? item.source : '',
     characters,
@@ -849,7 +883,29 @@ function autoCastOf(raw: unknown): DshAutoCast | undefined {
     notes: Array.isArray(item.notes)
       ? item.notes.filter((x): x is string => typeof x === 'string' && !!x.trim())
       : [],
+    ...created.length > 0 ? { created } : {},
   };
+}
+
+/** 归一 `result.autoCast.created`（桥接 2.24.0）：形状不对的项直接丢。 */
+function createdIdentitiesOf(raw: unknown): DshCreatedIdentity[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DshCreatedIdentity[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const o = item as Record<string, unknown>;
+    const label = typeof o.label === 'string' ? o.label.trim() : '';
+    const charId = typeof o.charId === 'string' ? o.charId.trim() : '';
+    if (!label || !charId) continue;
+    out.push({
+      label,
+      charId,
+      name: typeof o.name === 'string' ? o.name.trim() : label,
+      file: typeof o.file === 'string' ? o.file : '',
+      blockChars: Number.isFinite(Number(o.blockChars)) ? Number(o.blockChars) : 0,
+    });
+  }
+  return out;
 }
 
 /** 简单 sleep（可被 signal 打断）。 */

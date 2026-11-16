@@ -484,6 +484,18 @@ async function generate(): Promise<void> {
         '柏宝绘',
       );
     }
+    // DSH 侧新建档案（桥接 2.24.0）：查表查不到的人，DSH 按正文起草了一块外貌写进自己的
+    // identities/<id>.md。那不是「校验过的规范外观」，是模型起稿 —— 必须说清「去改哪里」，
+    // 否则用户会以为这是官方设定，下张图继续用一块没人看过的东西。
+    const createdArchives = dshAutoCast?.created ?? [];
+    if (createdArchives.length) {
+      toastr.info(
+        `DSH 给 ${createdArchives.map(item => `${item.label}（${item.charId}）`).join('、')}`
+        + ' 新建了档案：动漫表里没有这几个人，形象块是按正文起草的。'
+        + '要改就打开 DSH 配置台「角色」页改 char_block（改完自动建档标记会清掉）；不想要就在那张卡上停用或删除。',
+        '柏宝绘',
+      );
+    }
     result.revoke();
     // finalPrompt 已经通过 onPrompt 在请求前落账,这里再带一次是同源的幂等补录:
     // 万一 onPrompt 那条路径被 safeHistory 吞掉,成功路径仍能把全文补上。

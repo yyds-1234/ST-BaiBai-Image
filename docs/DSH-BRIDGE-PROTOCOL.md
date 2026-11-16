@@ -188,6 +188,25 @@
   动漫角色用本单生效的线。绑错线下一单会被 lineGate 静默跳过，所以别让客户端自己猜。
   `characters`（`显示名：引用`）写法一字未改，老客户端照旧可用；**要建档请用 `picks`**，
   不要去拆 `characters` 的冒号（名字里理论上可以出现冒号）。
+- `autoCast.created`（**2.24.0**）：这一单**新建了哪些档案**。
+  `[{ label, charId, name, file, blockChars }]`，对应的 `picks` 项会带 `"created": true`
+  且 `source: "auto"`、`ref` = 档案 id（如 `34-漩涡鸣人`）。
+
+  > **查表查不到就建档**：动漫表只有 3 万条罗马字，中文名 / 冷门角色常常查不到 —— 以前那种人
+  > 这一帧就没有脸（写手没设定、插件没块）。2.24.0 起，DSH 会按这一单的正文起草一块英文外貌，
+  > 写进它自己的 `identities/<id>.md`（带 `auto: true` 标记与 `alias: <罗马字>`），再把
+  > 「显示名：档案 id」并进本单 —— 写手与出图两侧当**普通档案**用。
+  >
+  > 客户端要做的：① 照旧把 `picks` 落进档案映射（下一单直接命中，不再起草）；
+  > ② 告诉用户「这块是模型按正文起的稿、去哪改」（DSH 配置台「角色」页，`POST /identity`
+  > 带 `overwrite: true` 走同一套改写，改完 `auto` 标记会被清掉）。
+  > 「查不到」的门槛很严（2.24.0）：查表本身对写法有兜底 —— 中文别名表（`鸣人` / `漩涡鸣人` →
+  > `uzumaki naruto`）+ **词序/括注重排比对**（`naruto uzumaki (naruto)` → `uzumaki naruto`）。
+  > 所以自动建档只在「别名、词序、识别器写法三样全对不上」时才触发，也就是表里**真的没有**这个人；
+  > 表里有的角色永远走 `copy_prompt`，不会被起草块顶替。
+  >
+  > **已有档案永不覆盖**；写的块**不带** `inject: verbatim` —— 逐字注入是校验过的
+  > `copy_prompt` 的待遇，起草的块交给写手消化。开关：配置集 `bridge.autoIdentity`（`smart` / `off`）。
 - `requestId` 与 `jobId` 相同：拿它去配置台 `/story-image-admin` 的「请求历史」页，
   就能看到这一次请求完整的上下文（写手 system、画面占位、出稿、路由、耗时、报错）。
   写串**不再建 DSH 会话**，所以侧栏里不会出现 bridge-writer-*。
@@ -259,11 +278,17 @@ POST { "scene": "芙宁娜坐在歌剧院高台上，胡桃靠在柱子旁打哈
 
 - 入参：`scene`（必填）、`configSet`（也认 `line`）、`autoCast`（`false` / `true` / `'mechanical'`）。
   不传 `autoCast` 就按 `bridge.autoCast`（默认 `smart`）；真人线一律降到 `mechanical`（没有表可查）。
+- `create`（**2.24.0**，默认 `false`）：试跑时**顺带建档** —— 查表 miss 的人按这个接口的
+  `scene` 起草档案写进磁盘，回包里多一份 `created`（与 `/generate` 的
+  `autoCast.created` 同形），`picks` 也多出那几条（`created: true`）。
+  默认关：这个接口是诊断用的，点开看一眼不该往磁盘写文件 —— 面板「试跑」要用才带。
 - `characters` 与 `/generate` 的 `characters` **同形**（`显示名：引用`）：客户端可以直接把它塞回请求。
 - `picks`（2.15.0；`line` 自 2.16.0）与 `/generate` 的 `autoCast.picks` 同形
   （`{ label, ref, kind, source, line }`）：柏宝绘面板的「试跑」用它当场显示
   「正文里的名字 → 查表引用」，也可以据此先建好映射。
 - `catalog` = 这条线有没有动漫表（`false` 表示只可能认档案）。
+- `created`（2.24.0）：这一趟新建的档案（只在 `create: true` 时可能出现），与
+  `/generate` 的 `autoCast.created` 同形。
 - 为什么单开一条：平时认人藏在 `/generate` 里，要等一整张图（40～90s）才知道认成了谁；
   面板的「试跑自动认角色」用它当场看清「机械层认到谁、模型层又补了谁」——认错了立刻改映射或关开关。
 - 动漫线上会走一趟识别模型（几秒）；那一趟失败只影响这次预览，理由进 DSH 日志，不影响出图。
