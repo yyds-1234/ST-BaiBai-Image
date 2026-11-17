@@ -403,6 +403,8 @@ export async function generateImage(
         conn,
         {
           scene,
+          // 固定提示词（DSH 渠道的“固定正面”）：DSH 会拼在成品串最前面；空串不发。
+          fixedPrompt: settings.dshBridge.fixedPrompt.trim() || undefined,
           // 剧情上下文（桥接 2.23.0）：只给写手理解前因，不进画面串 —— 见 autoTag/dshStory.ts 的文件头。
           story: input.dshStory,
           // 修改意见（桥接 2.26.0）：这一单是重画，用户写了要改什么（写手的 `## 修改要求`）。

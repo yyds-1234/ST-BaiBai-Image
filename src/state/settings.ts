@@ -136,7 +136,8 @@ export interface ComfyUISettings extends BackendConn {
  *
  * 与 ComfyUI / NAI 的差别在**职责划分**上:那两个后端要求柏宝绘自己把提示词拼好,
  * 这个后端只要一段中文画面描述——提示词工程(配置集规范、风格档、形象块)全在 DSH 侧,
- * 故这里的字段只有「怎么连」与「用哪套配置集」,没有任何提示词或采样参数。
+ * 故这里的字段只有「怎么连」「用哪套配置集」与可选的固定提示词；没有采样参数。
+ * 固定提示词是例外：它由柏宝绘随请求显式发给 DSH，不是 DSH 侧配置集能替代的东西。
  *
  * 字段契约见 docs/DSH-BRIDGE-PROTOCOL.md;连接形状与 backends/dshBridge.ts 的 DshBridgeConn
  * 完全同源,故直接取别名,不抄第二份。
@@ -153,6 +154,14 @@ export interface ComfyUISettings extends BackendConn {
  * 命中判据仍然是正文，映射只决定**长相从哪儿来**（DSH 档案 / 动漫表 / 柏宝绘角色库）。
  */
 export interface DshBridgeSettings extends DshBridgeConn {
+  /**
+   * 固定提示词（DSH 渠道的“固定正面”）：由柏宝绘随请求发给 DSH，
+   * 由 DSH 拼在成品串最前面（风格档之前）。空串 = 不追加。
+   *
+   * 与本地 ComfyUI 的 `comfyui.simple.positive` 不是同一个字段：那条只在
+   * 柏宝绘自己拼串时生效；走 DSH 写手时必须单独发，否则 DSH 看不到。
+   */
+  fixedPrompt: string;
   /**
    * 名字 → DSH 档案 / 动漫角色的映射表（见 state/dshCharMap）。
    *
@@ -1643,6 +1652,8 @@ function dshBridgeDefaults(): DshBridgeSettings {
     timeoutMs: DSH_BRIDGE_DEFAULT_TIMEOUT_MS,
     configSet: '',
     count: 1,
+    // 空串 = 不追加固定提示词；DSH 侧风格档 / 工作流照常生效。
+    fixedPrompt: '',
     // 空表 = 一个都不映射:所有角色仍走柏宝绘角色库(与升级前逐字一致)。
     charMappings: [],
     // 默认开:占位里叫得出名字、却没配映射的人,让 DSH 按它自己的档案 / 动漫表去认。
@@ -2023,6 +2034,8 @@ function normalizeDshBridge(raw: unknown, def: DshBridgeSettings): DshBridgeSett
     timeoutMs: Math.max(5000, Math.round(clampNumber(o.timeoutMs, def.timeoutMs, 5000, 900000))),
     configSet: typeof o.configSet === 'string' ? o.configSet : def.configSet,
     count: Math.round(clampNumber(o.count, def.count, 1, 8)),
+    // 空串有意义（= 不追加），不能走 || 回落；非字符串回落默认空串。
+    fixedPrompt: typeof o.fixedPrompt === 'string' ? o.fixedPrompt : def.fixedPrompt,
     // 映射表整个走 dshCharMap 的清洗:空行 / 只填一半 / 同名两处都在那里处理,
     // 面板写入与 hydrate 共用同一套规则(否则面板能存进一个 hydrate 会丢的形态)。
     charMappings: normalizeDshCharMappings(o.charMappings),

@@ -76,6 +76,7 @@
 | `size` | `'portrait'` \| `'landscape'` | 否 | 默认 `portrait`。DSH 会按它摆正宽高（对调，像素总数不变）。 |
 | `configSet` | string | 否 | 配置集 id。柏宝绘把空串收口成 **`moss-real`**（moss 真人线）再发，与阅读器发配置集同字段；DSH 侧仍按原语义「留空用默认集」。 |
 | `negative` | string | 否 | 追加负向串；与配置集 `negativeHint` **合并**，不替换。 |
+| `fixedPrompt` | string | 否 | **固定提示词**（柏宝绘 DSH 渠道的“固定正面”）：只由 DSH 出图拼装层拼在成品串**最前面**（风格档之前），不进写手、不进自动认角色；`layoutMode` 下在 Layout JSON 编译完成后再拼，绝不混进 JSON 解析输入。上限 `promptMaxChars`。 |
 | `count` | integer | 否 | 1..8，默认 1。柏宝绘只落第一张。 |
 | `seed` | integer | 否 | 复现种子；0/缺省 = 随机。 |
 | `source` | object | 否 | `{ chatId, messageId, slot }`，纯诊断，进 `runs.jsonl`，不进提示词。 |

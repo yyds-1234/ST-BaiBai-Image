@@ -28,6 +28,7 @@ function dshReady(overrides: Partial<typeof settings.dshBridge> = {}): void {
   settings.dshBridge.timeoutMs = 180000;
   settings.dshBridge.configSet = '';
   settings.dshBridge.count = 1;
+  settings.dshBridge.fixedPrompt = '';
   Object.assign(settings.dshBridge, overrides);
 }
 
@@ -121,7 +122,16 @@ describe('generateImage: dsh 分支', () => {
     expect(body.scene).toBe('傍晚的天台，她靠着栏杆回头');
     // 没给角色块时整个字段都不发：发 [] 会让 DSH 多报一条「无角色」告警
     expect(body.characters).toBeUndefined();
+    expect(body.fixedPrompt).toBeUndefined();
     expect(body.source).toEqual({ chatId: 'c1', messageId: 7, slot: 0 });
+  });
+
+  it('固定提示词随 DSH 请求发到 fixedPrompt', async () => {
+    dshReady({ fixedPrompt: 'sonsp, best quality' });
+    acceptThenDone();
+    await generateImage({ prompt: '', dsh: '傍晚的天台，她靠着栏杆回头', size: 'portrait', seed: 13 });
+    const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(body.fixedPrompt).toBe('sonsp, best quality');
   });
 
   it('三行占位（人物名称 / 人物服装 / 场景描述）按协议顺序一起进 scene', async () => {

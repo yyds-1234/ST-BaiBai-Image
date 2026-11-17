@@ -487,6 +487,23 @@ async function probeCast(): Promise<void> {
 
         <div class="bbi-field">
           <div class="bbi-field-head">
+            <span class="bbi-field-label">固定提示词</span>
+          </div>
+          <textarea
+            v-model="settings.dshBridge.fixedPrompt"
+            class="bbi-input"
+            rows="3"
+            spellcheck="false"
+            placeholder="可选：风格/画质/触发词，DSH 会拼在成品串最前面"
+          ></textarea>
+          <p class="bbi-field-hint">
+            只在 <b>DSH 写手</b>渠道生效：DSH 把它拼在成品串最前面（风格档之前）。
+            <b>不要填 Layout JSON</b>——布局线的 JSON 必须放在场景/占位里；固定提示词不参与版式编译。
+          </p>
+        </div>
+
+        <div class="bbi-field">
+          <div class="bbi-field-head">
             <span class="bbi-field-label">超时（秒）</span>
           </div>
           <input class="bbi-input" type="number" min="5" max="900" v-model.number="timeoutSec" />

@@ -277,6 +277,11 @@ export interface DshGenerateValues {
   /** 画面占位散文。 */
   scene: string;
   /**
+   * 固定提示词（DSH 渠道的“固定正面”）：DSH 会把它拼在成品串最前面
+   * （风格档之前）。空串/缺省 = 不发，老 DSH 插件会忽略这个未知字段。
+   */
+  fixedPrompt?: string;
+  /**
    * 剧情上下文（协议 §3.1，桥接 2.23.0）：从**上一条占位**到这一条之间的正文，≤500 字。
    *
    * 【为什么占位之外还要给剧情】三行委托单只交代这一帧长什么样，「人为什么在这儿、刚才发生了什么」
@@ -839,6 +844,8 @@ export async function generateDshImage(
   if (values.autoCast !== undefined) payload.autoCast = values.autoCast;
   if (conn.configSet?.trim()) payload.configSet = conn.configSet.trim();
   if (values.negative?.trim()) payload.negative = values.negative.trim();
+  // 固定提示词：空串不发（老插件忽略未知字段；发空串等于声明“有这一项但没内容”）。
+  if (values.fixedPrompt?.trim()) payload.fixedPrompt = values.fixedPrompt.trim();
   // 剧情上下文（2.23.0）：空串不发 —— 老插件会忽略这个未知字段，新插件会把它排进写手的 `## 剧情`；
   // 发空串则等于声明「这一单有剧情字段但内容是空的」，白让写手多读一个小标题。
   if (values.story?.trim()) payload.story = values.story.trim();
