@@ -62,6 +62,8 @@ describe('老配置升级', () => {
       autoCast: true,
       // 自动建档默认开：认出来的动漫角色写进映射，下一单直接机械查表（不再跑识别模型）。
       autoMap: true,
+      // 世界书正文默认留空 = 用内置（可编辑，见 dshPlaceholder 的 dshWorldbookOf）
+      worldbookEntry: '',
     });
   });
 
@@ -111,6 +113,7 @@ describe('dshBridge 逐字段兜底', () => {
         // 会让用户在面板上关掉、刷新又自己打开。
         autoCast: false,
         autoMap: false,
+        worldbookEntry: '【我的协议】场景描述写正在做什么',
       },
     });
     expect(settings.dshBridge).toEqual({
@@ -122,6 +125,7 @@ describe('dshBridge 逐字段兜底', () => {
       charMappings: [{ name: '林夏', kind: 'archive', ref: '26-小静', line: 'moss-real' }],
       autoCast: false,
       autoMap: false,
+      worldbookEntry: '【我的协议】场景描述写正在做什么',
     });
   });
 
@@ -144,6 +148,14 @@ describe('dshBridge 逐字段兜底', () => {
   it('空 configSet 保持空串（= 跟随默认线），不被默认值顶掉', async () => {
     const settings = await hydrateWith({ dshBridge: { configSet: '' } });
     expect(settings.dshBridge.configSet).toBe('');
+  });
+
+  it('世界书正文可编辑：自定义原样保留，空串仍是有意义的「用内置」', async () => {
+    const custom = await hydrateWith({ dshBridge: { worldbookEntry: '【我的协议】\n第二行' } });
+    expect(custom.dshBridge.worldbookEntry).toBe('【我的协议】\n第二行');
+    // 空串必须原样留住：被 || 或默认值顶上之后，面板就分不清「没改过」与「特意清空」
+    const builtin = await hydrateWith({ dshBridge: { worldbookEntry: '' } });
+    expect(builtin.dshBridge.worldbookEntry).toBe('');
   });
 
   it('发请求时收口成 moss 真人线：留空不再是「DSH 的默认集」', async () => {
@@ -181,6 +193,7 @@ describe('dshBridge 逐字段兜底', () => {
       charMappings: [],
       autoCast: true,
       autoMap: true,
+      worldbookEntry: '',
     });
   });
 

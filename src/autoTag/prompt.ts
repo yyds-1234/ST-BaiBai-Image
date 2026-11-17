@@ -17,7 +17,7 @@ import {
   fetchWorldInfo,
 } from '@/autoTag/context';
 import type { BookMemoryContext } from '@/autoTag/bookMemory';
-import { DEFAULT_DSH_PLACEHOLDER_SPEC, DSH_WORLDBOOK_ENTRY } from '@/autoTag/dshPlaceholder';
+import { DSH_WORLDBOOK_ENTRY, composeDshPlaceholderSpec, dshWorldbookOf } from '@/autoTag/dshPlaceholder';
 import { SHOT_ORDER_RULE } from '@/autoTag/shotspec';
 import { isAiStoryMessage, isStoryMessage, type STContext } from '@/st/context';
 import type { AutoTagSettings } from '@/state/settings';
@@ -528,10 +528,26 @@ ${characterRule}
  * 规范(内置默认或用户自定义)里已经有一份原文时,再让世界书注入一遍等于同一组规则叠两层权重;
  * 更糟的是用户改了世界书那份却没改规范时,模型会同时收到两套有细微差别的口径。
  * 判定挂在**生效规范**上:用户把协议从规范里删了,世界书那份就原样保留(它成了唯一来源)。
+ *
+ * `protocol` 是「这一次真正生效的世界书正文」。世界书条目可编辑之后,规范里嵌的可能是用户
+ * 改过的那一份,而聊天里挂着的仍是导入时的旧文本 —— 两个候选都试,只改了一边也不会叠两层。
  */
-export function dedupeProtocolFromWorldInfo(worldInfo: string, spec: string): string {
-  if (!worldInfo || !spec.includes(DSH_WORLDBOOK_ENTRY)) return worldInfo;
-  return worldInfo.replace(DSH_WORLDBOOK_ENTRY, '【上方规范已含同一条画面占位协议，此处不再重复。】');
+export function dedupeProtocolFromWorldInfo(
+  worldInfo: string,
+  spec: string,
+  protocol: string = DSH_WORLDBOOK_ENTRY,
+): string {
+  if (!worldInfo) return worldInfo;
+  const protocolText = protocol.trim() || DSH_WORLDBOOK_ENTRY.trim();
+  const builtin = DSH_WORLDBOOK_ENTRY.trim();
+  // 规范里只要含**其中一份**协议,聊天里挂着的两份都不能再注入:规范内嵌的是自定义那份时,
+  // 聊天里多半还是导入时的旧内置文本 —— 那是同一个槽位的两个版本,注入两次就是两层权重。
+  if (!spec.includes(protocolText) && !spec.includes(builtin)) return worldInfo;
+  let out = worldInfo;
+  for (const text of new Set([protocolText, builtin])) {
+    out = out.split(text).join('【上方规范已含同一条画面占位协议，此处不再重复。】');
+  }
+  return out;
 }
 
 /**
@@ -610,9 +626,13 @@ export async function buildDshPlaceholderMessages(
   // 协议原文 —— 格式只有一个真源,面板「复制世界书条目」、世界书条目、这条请求三处同一份。
   // 用户改它 = 换委托书的写法(与自动 tag 链路改规范是同一件事)。
   //
+  // 世界书正文本身也可编辑(渠道页「DSH 写手 → 世界书条目」,存 settings.dshBridge.worldbookEntry):
+  // 内置默认因此是**现算的**,跟着当前生效的那份走;用户自定义过 dshSpec 时以他写的为准。
+  //
   // 下面这半截(数量 / 位置 / 画幅 / JSON 形状)**不放开编辑**:它必须与 parseDshPlan 同源,
   // 改错就是「模型交得漂亮、解析器一条都不认」,而这在设置页里完全看不出来。
-  const spec = (options.prompts?.dshSpec ?? '').trim() || DEFAULT_DSH_PLACEHOLDER_SPEC;
+  const worldbook = dshWorldbookOf(settings.dshBridge.worldbookEntry);
+  const spec = (options.prompts?.dshSpec ?? '').trim() || composeDshPlaceholderSpec(worldbook);
   const contract = [
     spec,
     [
@@ -635,7 +655,7 @@ export async function buildDshPlaceholderMessages(
   if (charCard) messages.push({ role: 'system', content: buildCharCardSystem(charCard) });
   if (persona) messages.push({ role: 'system', content: buildPersonaSystem(persona) });
   // 世界书里那条常驻的占位协议与规范内容重复,先摘掉再注入(见 dedupeProtocolFromWorldInfo)
-  const worldInfoText = dedupeProtocolFromWorldInfo(worldInfo, spec);
+  const worldInfoText = dedupeProtocolFromWorldInfo(worldInfo, spec, worldbook);
   if (worldInfoText.trim()) {
     messages.push({ role: 'system', content: buildWorldInfoSystem(worldInfoText) });
   }

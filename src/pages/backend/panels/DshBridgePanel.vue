@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { DSH_WORLDBOOK_ENTRY, DSH_WORLDBOOK_TITLE } from '@/autoTag/dshPlaceholder';
+import { DSH_WORLDBOOK_ENTRY, DSH_WORLDBOOK_TITLE, dshWorldbookOf } from '@/autoTag/dshPlaceholder';
 import {
   DSH_PROTOCOL_VERSION,
   detectDshCast,
@@ -20,7 +20,7 @@ import Icon from '@/components/Icon.vue';
 import { copyText } from '@/st/clipboard';
 import { dshMappingLabel, dshMappingValue, parseDshMappingValue } from '@/state/dshCharMap';
 import { effectiveDshBridge, settings } from '@/state/settings';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 /**
  * 「DSH 写手」渠道面板:只配怎么连与用哪套配置集。
@@ -82,8 +82,58 @@ async function onTestConnection(): Promise<void> {
   }
 }
 
+// ── 世界书条目正文(可编辑)─────────────────────────────────────────────────
+//
+// 存进设置的是**自定义正文**(空串 = 用内置),而这里编辑的是草稿:让 textarea 直接
+// v-model 到设置,用户一清空就会立刻跳回内置文本,想整段重打都做不到。改完点「保存」才写回。
+//
+// 为什么这段文本归用户:它是主模型每轮拼进提示词的一段话,口径要能按卡调;而 ST 没有
+// 对外暴露写世界书的接口,插件只能「存一份 + 让人复制」——所以这份源文本必须是可改的。
+const worldbookDraft = ref(dshWorldbookOf(settings.dshBridge.worldbookEntry));
+/** 用户动过草稿之后,不再让外部回灌覆盖它(设置是异步 hydrate 的)。 */
+const worldbookTouched = ref(false);
+
+watch(
+  () => settings.dshBridge.worldbookEntry,
+  value => {
+    if (worldbookTouched.value) return;
+    worldbookDraft.value = dshWorldbookOf(value);
+  },
+  { immediate: true },
+);
+
+/** 草稿与「真正生效的那份」不一致 = 有未保存的改动。 */
+const worldbookDirty = computed(
+  () => worldbookDraft.value.trim() !== dshWorldbookOf(settings.dshBridge.worldbookEntry).trim(),
+);
+/** 存档里有没有自定义正文(空串 = 内置)。 */
+const worldbookCustom = computed(() => settings.dshBridge.worldbookEntry.trim().length > 0);
+
+/** 输入即视为「用户动过」:此后外部回灌不再覆盖草稿(否则一存盘/一刷新就把人打了一半的字冲掉)。 */
+function touchWorldbook(): void {
+  worldbookTouched.value = true;
+}
+
+/** 保存:与内置逐字相同就存空串(= 回到内置),免得存档里多一份不会跟着升级走的副本。 */
+function saveWorldbook(): void {
+  const text = worldbookDraft.value;
+  settings.dshBridge.worldbookEntry = text.trim() === DSH_WORLDBOOK_ENTRY.trim() ? '' : text;
+  worldbookTouched.value = false;
+  toastr.success('世界书正文已保存;要让它生效,重新「复制世界书条目」粘进 ST 的那条条目', '柏宝绘');
+}
+
+/** 恢复内置:清空自定义,草稿同步回内置正文。 */
+function resetWorldbook(): void {
+  settings.dshBridge.worldbookEntry = '';
+  worldbookDraft.value = DSH_WORLDBOOK_ENTRY;
+  worldbookTouched.value = false;
+  toastr.info('已回到内置正文;复制一次粘到世界书条目里才会生效', '柏宝绘');
+}
+
 async function copyWorldBook(): Promise<void> {
-  await copyText(DSH_WORLDBOOK_ENTRY, `「${DSH_WORLDBOOK_TITLE}」已复制，粘到世界书条目的内容里`);
+  // 复制的是**框里这段**:用户可能刚改完还没保存,复制旧的那份等于白改。
+  const text = worldbookDraft.value.trim() || DSH_WORLDBOOK_ENTRY;
+  await copyText(text, `「${DSH_WORLDBOOK_TITLE}」已复制，粘到世界书条目的内容里`);
 }
 
 /** 超时以秒显示:面板里让用户填 180000 毫秒既难读,也容易多打或少打一个零。 */
@@ -775,8 +825,15 @@ async function probeCast(): Promise<void> {
 
       <Collapsible title="世界书条目" :open="false">
         <p class="bbi-field-hint">
-          下面复制的是<b>主协议</b>：新建一条世界书条目（建议标题：{{ DSH_WORLDBOOK_TITLE }}），
+          下面是<b>主协议</b>，也就是这一段：新建一条世界书条目（建议标题：{{ DSH_WORLDBOOK_TITLE }}），
           触发方式选<b>常驻</b>（蓝灯），把正文粘进去。主模型每轮都会看到它，才会按格式写占位。
+        </p>
+        <p class="bbi-field-hint">
+          <b>这段正文可以直接改</b>：改完点「保存」，再点「复制世界书条目」粘进 ST 的那条条目里
+          （插件不会替你改世界书）。它决定主模型怎么写占位；插件侧的解析口径不变 ——
+          三行标签、<code>&lt;bbi_image&gt;</code> / <code>&lt;size&gt;</code> 外壳仍按协议读，
+          写成别的形状只会解析不出来。「设置 → 自定义提示词 → DSH 委托单规范」的内置默认
+          也跟这份走，手动补写时用的是同一套口径。
         </p>
         <p class="bbi-field-hint">
           想一次导全，用仓库里的 <code>docs/worldbook/01-柏宝绘-DSH画面占位.json</code>：
@@ -792,11 +849,37 @@ async function probeCast(): Promise<void> {
           <b>柏宝绘不会自动写入世界书</b>：ST 没有对外暴露写条目的一类接口，硬写只能摸未公开的内部函数，
           ST 一升级就断，还会在用户书单里留下他没同意过的条目。
         </p>
-        <div class="conn-actions">
-          <button class="bbi-btn" type="button" @click="copyWorldBook">
-            <Icon name="copy" />
-            复制世界书条目
-          </button>
+        <div class="bbi-field">
+          <div class="bbi-field-head">
+            <span class="bbi-field-label">条目正文</span>
+            <span v-if="worldbookDirty" class="dsh-wb-badge is-dirty">未保存</span>
+            <span v-else-if="worldbookCustom" class="dsh-wb-badge is-custom">已自定义</span>
+            <span v-else class="dsh-wb-badge is-builtin">内置默认</span>
+          </div>
+          <textarea
+            v-model="worldbookDraft"
+            class="bbi-input dsh-wb-text"
+            rows="14"
+            spellcheck="false"
+            aria-label="世界书条目正文"
+            @input="touchWorldbook"
+          ></textarea>
+          <p class="bbi-field-hint">
+            草稿 {{ worldbookDraft.trim().length }} 字 · 内置 {{ DSH_WORLDBOOK_ENTRY.length }} 字。
+            世界书每轮都进提示词，改长会挤占预算；弱约束条目越长，模型越会挑着执行。
+          </p>
+          <div class="conn-actions">
+            <button class="bbi-btn" type="button" @click="copyWorldBook">
+              <Icon name="copy" />
+              复制世界书条目
+            </button>
+            <button class="bbi-btn" type="button" :disabled="!worldbookDirty" @click="saveWorldbook">
+              保存
+            </button>
+            <button class="bbi-btn" type="button" @click="resetWorldbook">
+              恢复内置
+            </button>
+          </div>
         </div>
       </Collapsible>
     </div>
@@ -816,6 +899,33 @@ async function probeCast(): Promise<void> {
   overflow-x: auto;
   white-space: pre;
   tab-size: 2;
+}
+
+/* 世界书正文编辑器:等宽 + 可纵向拉伸。这份文本是逐字粘进世界书的,等宽才好比对换行。 */
+.dsh-wb-text {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  font-family: var(--bbi-font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+/* 状态角标:未保存 / 已自定义 / 内置默认 —— 只有「未保存」值得用颜色提醒。 */
+.dsh-wb-badge {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-secondary);
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-l2);
+}
+.dsh-wb-badge.is-dirty {
+  color: var(--dsw-alias-warning, #b8860b);
+  border-color: currentColor;
 }
 
 /* 映射行：名字 / 目标 / 删除。名字窄、目标宽（档案 id + 线要放得下），删除键定宽。

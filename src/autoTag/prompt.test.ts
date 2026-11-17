@@ -7,7 +7,11 @@ import {
   dedupeProtocolFromWorldInfo,
   expandNlSections,
 } from '@/autoTag/prompt';
-import { DEFAULT_DSH_PLACEHOLDER_SPEC, DSH_WORLDBOOK_ENTRY } from '@/autoTag/dshPlaceholder';
+import {
+  composeDshPlaceholderSpec,
+  DEFAULT_DSH_PLACEHOLDER_SPEC,
+  DSH_WORLDBOOK_ENTRY,
+} from '@/autoTag/dshPlaceholder';
 import {
   activeComfyPreset,
   DEFAULT_COMFY_THINKING,
@@ -1881,7 +1885,7 @@ describe('DSH 画面占位请求', () => {
       const joined = messages.map(message => message.content).join('\n---\n');
 
       // 协议原文整段照搬世界书(格式只有一个真源),且必须先作废「续写」语境
-      expect(joined).toContain('【柏宝绘 · 画面占位协议 v2.1】');
+      expect(joined).toContain('【柏宝绘 · 画面占位协议 v2.2】');
       expect(joined).toContain('你这次不是续写正文');
       expect(joined).toContain('一次回复最多一条');
       // 输出契约:JSON 形状、数量、位置、画幅
@@ -1919,7 +1923,7 @@ describe('DSH 画面占位请求', () => {
       const specMessage = messages.find(message => message.content.includes('我的委托单规范'));
       expect(specMessage).toBeTruthy();
       // 用户规范替换掉内置那一份(内含世界书原文),但输出契约仍由插件追加
-      expect(messages.map(message => message.content).join('\n').includes('【柏宝绘 · 画面占位协议 v2.1】')).toBe(false);
+      expect(messages.map(message => message.content).join('\n').includes('【柏宝绘 · 画面占位协议 v2.2】')).toBe(false);
       expect(specMessage?.content).toContain('**本次输出契约**');
       expect(specMessage?.content).toContain('"dsh"');
       expect(specMessage?.content).toContain('images 数量必须在');
@@ -1931,13 +1935,44 @@ describe('DSH 画面占位请求', () => {
   it('世界书里常驻的同一条协议会被摘掉，避免同一组规则叠两层', () => {
     const worldInfo = '【别的条目】一些设定\n\n' + DSH_WORLDBOOK_ENTRY;
     const deduped = dedupeProtocolFromWorldInfo(worldInfo, DEFAULT_DSH_PLACEHOLDER_SPEC);
-    expect(deduped).not.toContain('【柏宝绘 · 画面占位协议 v2.1】');
+    expect(deduped).not.toContain('【柏宝绘 · 画面占位协议 v2.2】');
     expect(deduped).toContain('此处不再重复');
     expect(deduped).toContain('【别的条目】');
     // 用户把协议从规范里删掉时，世界书那份是唯一来源，不许动它
     expect(dedupeProtocolFromWorldInfo(worldInfo, '自定义规范')).toBe(worldInfo);
     // 没有命中就原样返回（不改动无关内容）
     expect(dedupeProtocolFromWorldInfo('只有设定', DEFAULT_DSH_PLACEHOLDER_SPEC)).toBe('只有设定');
+  });
+
+  it('世界书正文改过之后，改过的与内置的两份协议都能被摘掉', () => {
+    const custom = '【我的画面占位协议】\n\n三行照写。';
+    const spec = composeDshPlaceholderSpec(custom);
+    const worldInfo = '【别的条目】\n\n' + custom + '\n\n' + DSH_WORLDBOOK_ENTRY;
+    const deduped = dedupeProtocolFromWorldInfo(worldInfo, spec, custom);
+    // 规范里嵌的是自定义那份 → 聊天里粘的旧内置文本也不能再注入一遍
+    expect(deduped).not.toContain('【我的画面占位协议】');
+    expect(deduped).not.toContain('【柏宝绘 · 画面占位协议');
+    expect(deduped).toContain('【别的条目】');
+    expect(deduped).toContain('此处不再重复');
+  });
+
+  it('世界书正文可编辑：手动补写按设置里那份教模型写占位', async () => {
+    const oldBackend = settings.defaultBackend;
+    const oldEntry = settings.dshBridge.worldbookEntry;
+    try {
+      settings.defaultBackend = 'dshbridge';
+      settings.dshBridge.worldbookEntry = '【我的协议】场景描述写正在做什么';
+      const messages = await buildDshPlaceholderMessages(context(), 1, mossOptions({}), null);
+      const joined = messages.map(message => message.content).join('\n');
+      expect(joined).toContain('【我的协议】场景描述写正在做什么');
+      // 自定义之后内置那份不许再跟着发(同一组规则两层权重)
+      expect(joined).not.toContain('【柏宝绘 · 画面占位协议');
+      // 输出契约仍由插件追加,不受正文改动影响
+      expect(joined).toContain('**本次输出契约**');
+    } finally {
+      settings.defaultBackend = oldBackend;
+      settings.dshBridge.worldbookEntry = oldEntry;
+    }
   });
 
   it('下限大于 0 时改口要求补足，而不是允许空数组', async () => {

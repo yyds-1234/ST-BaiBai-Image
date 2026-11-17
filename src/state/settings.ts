@@ -181,6 +181,18 @@ export interface DshBridgeSettings extends DshBridgeConn {
    * 显式配才是对的；DSH 侧也只在动漫线认人。用户手挑的行不会被覆盖。
    */
   autoMap: boolean;
+  /**
+   * 世界书条目正文(可编辑;空串 = 用内置 `DSH_WORLDBOOK_ENTRY`)。
+   *
+   * 为什么进设置:这份文本是主模型每轮拼进提示词的一段话,口径得能按用户的卡调
+   * (比如某张卡只想画上半身,或想给场景描述加一条专属要求)。ST 没有对外暴露写世界书的接口
+   * (见 autoTag/dshPlaceholder.ts 的模块注释),所以「存一份 + 面板里编辑 + 一键复制」
+   * 是唯一能让用户改完就用上的路径 —— 插件永远不替你改世界书,但那份正文的源文本归你。
+   *
+   * 委托单规范的内置默认也跟着它走(autoTag/dshPlaceholder 的 composeDshPlaceholderSpec),
+   * 免得「世界书改了、手动补写那条请求还是旧口径」。
+   */
+  worldbookEntry: string;
 }
 
 /**
@@ -1641,6 +1653,8 @@ function dshBridgeDefaults(): DshBridgeSettings {
     // charMappings(marked auto),下一单直接点名,DSH 走机械查表 —— 不再跑识别模型。
     // 默认开:这个开关本身就是「让下次对得上」的答案;不想让设置被自动写就关掉。
     autoMap: true,
+    // 空串 = 用内置世界书正文:默认值只在这里留空,真正生效的那份由 dshWorldbookOf 收口。
+    worldbookEntry: '',
   };
 }
 
@@ -2015,6 +2029,9 @@ function normalizeDshBridge(raw: unknown, def: DshBridgeSettings): DshBridgeSett
     // 只有明确存成 false 才是关:老配置没有这个键(= undefined),进来就是开。
     autoCast: o.autoCast !== false,
     autoMap: o.autoMap !== false,
+    // 空串是**有意义的存储值**(= 用内置正文),不能被 || 吞成内置文本 ——
+    // 那样面板上就分不清「没改过」与「特意清空想回到内置」。
+    worldbookEntry: typeof o.worldbookEntry === 'string' ? o.worldbookEntry : def.worldbookEntry,
   };
 }
 

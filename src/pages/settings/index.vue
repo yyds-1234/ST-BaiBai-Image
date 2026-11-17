@@ -6,7 +6,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import Icon from '@/components/Icon.vue';
 import ModalMask from '@/components/ModalMask.vue';
 import { fetchModels, testChannel } from '@/api/client';
-import { DEFAULT_DSH_PLACEHOLDER_SPEC } from '@/autoTag/dshPlaceholder';
+import { composeDshPlaceholderSpec, dshWorldbookOf } from '@/autoTag/dshPlaceholder';
 import {
   BACKENDS,
   DEFAULT_COMFY_SPEC,
@@ -234,8 +234,12 @@ const TAG_PROMPT_METAS: TagPromptMeta[] = [
   {
     key: 'dshSpec',
     label: 'DSH 委托单规范',
-    hint: '「DSH 写手」渠道手动补写画面占位时拼进请求,定义三行委托书怎么写;内置默认内含世界书占位协议原文(与面板「复制世界书条目」同一份)。它前面还会拼上方的「破限词」,效果就是破限 + 世界书。输出契约(数量/位置/画幅/JSON 形状)由插件追加、不可在这里改。留空用内置默认。',
-    builtin: DEFAULT_DSH_PLACEHOLDER_SPEC,
+    hint: '「DSH 写手」渠道手动补写画面占位时拼进请求,定义三行委托书怎么写;内置默认内含世界书占位协议原文(与「渠道 → DSH 写手 → 世界书条目」框里那份同一份,那份可以直接改)。它前面还会拼上方的「破限词」,效果就是破限 + 世界书。输出契约(数量/位置/画幅/JSON 形状)由插件追加、不可在这里改。留空用内置默认。',
+    // 内置默认是**现算的**:世界书正文在渠道页可以改,这份规范的内置版必须跟着当前那一份走,
+    // 否则「世界书改了、手动补写还在按旧口径教模型」。
+    get builtin() {
+      return composeDshPlaceholderSpec(dshWorldbookOf(settings.dshBridge.worldbookEntry));
+    },
     macros: [],
   },
 ];

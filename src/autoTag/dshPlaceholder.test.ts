@@ -3,12 +3,15 @@ import { describe, expect, it } from 'vitest';
 import worldbook from '../../docs/worldbook/01-柏宝绘-DSH画面占位.json';
 import {
   buildDshPlaceholder,
+  composeDshPlaceholderSpec,
+  DEFAULT_DSH_PLACEHOLDER_SPEC,
   describeDshPlaceholder,
   DSH_PART_LABELS,
   DSH_WORLDBOOK_ENTRY,
   dshPartsOf,
   dshSceneForBridge,
   dshSceneOf,
+  dshWorldbookOf,
   isDshPlaceholder,
 } from '@/autoTag/dshPlaceholder';
 import {
@@ -261,7 +264,7 @@ describe('DSH_WORLDBOOK_ENTRY', () => {
   it('是一段可直接粘贴的成品文本：含格式、三行、长度与禁用清单', () => {
     expect(DSH_WORLDBOOK_ENTRY).toContain('<bbi_image><dsh>');
     expect(DSH_WORLDBOOK_ENTRY).toContain('<size>portrait</size>');
-    // 三行是 v2.1 的承重墙：名字 / 衣服 / 场景必须各占一行、各带标签
+    // 三行是 v2.1 起的承重墙：名字 / 衣服 / 场景必须各占一行、各带标签
     for (const label of DSH_PART_LABELS) expect(DSH_WORLDBOOK_ENTRY).toContain(`${label}：`);
     // 场景描述只要求「在哪、在做什么」，光/景别/机位是可选项 —— 世界书是弱约束，
     // 条目越细模型越会挑着执行，所以别再往这里加四要素清单。
@@ -269,6 +272,13 @@ describe('DSH_WORLDBOOK_ENTRY', () => {
       expect(DSH_WORLDBOOK_ENTRY).toContain(element);
     }
     expect(DSH_WORLDBOOK_ENTRY).toContain('一句话就够');
+    // v2.2：场景描述写的是「人物正在做什么」，不是定格的一帧 ——
+    // 写成摆拍姿势清单，画师画出来的是一尊姿势，人和正文的动势对不上。
+    expect(DSH_WORLDBOOK_ENTRY).toContain('正在做什么');
+    expect(DSH_WORLDBOOK_ENTRY).toContain('动作本身');
+    expect(DSH_WORLDBOOK_ENTRY).toContain('摆好姿势');
+    expect(DSH_WORLDBOOK_ENTRY).not.toContain('能定格的单帧动作');
+    expect(DSH_WORLDBOOK_ENTRY).not.toContain('只写这一帧');
     expect(DSH_WORLDBOOK_ENTRY).toContain('40 到 120 字');
     // 条目长度也是一条契约：世界书每轮都进提示词，长到两千字以上模型就开始漏项。
     expect(DSH_WORLDBOOK_ENTRY.length).toBeLessThan(1600);
@@ -310,5 +320,30 @@ describe('DSH_WORLDBOOK_ENTRY', () => {
       // 示例必须演示三行格式：模型学的是例子，不是上面那段散文说明
       expect(dshPartsOf(content.dsh ?? '').complete).toBe(true);
     }
+  });
+});
+
+describe('世界书正文可编辑（v2.2）', () => {
+  // 面板「渠道 → DSH 写手 → 世界书条目」把这段正文存进 settings.dshBridge.worldbookEntry,
+  // 空串 = 用内置。三条口径(面板 / 设置页 / 手动补写请求)都从这里取,
+  // 所以「空串回落」只允许有一个解释。
+  it('空串 / 纯空白 / 缺省 = 内置正文', () => {
+    expect(dshWorldbookOf('')).toBe(DSH_WORLDBOOK_ENTRY);
+    expect(dshWorldbookOf('   \n  ')).toBe(DSH_WORLDBOOK_ENTRY);
+    expect(dshWorldbookOf(undefined)).toBe(DSH_WORLDBOOK_ENTRY);
+  });
+
+  it('自定义正文去首尾空白后原样生效', () => {
+    expect(dshWorldbookOf('  我的协议\n第二行  ')).toBe('我的协议\n第二行');
+  });
+
+  it('委托单规范的内置默认跟着自定义正文走（不再嵌旧口径）', () => {
+    const spec = composeDshPlaceholderSpec('我的协议');
+    expect(spec).toContain('我的协议');
+    // 只嵌一份:自定义那份生效时,内置那份不许再出现(否则同一组规则叠两层)
+    expect(spec).not.toContain(DSH_WORLDBOOK_ENTRY);
+    // 没自定义时回到内置正文,且与常量逐字一致
+    expect(composeDshPlaceholderSpec('')).toContain(DSH_WORLDBOOK_ENTRY);
+    expect(DEFAULT_DSH_PLACEHOLDER_SPEC).toBe(composeDshPlaceholderSpec(DSH_WORLDBOOK_ENTRY));
   });
 });

@@ -57,7 +57,7 @@ src/
 │   ├── charAnchors.ts # 角色库:库文本注入 → 兜底替换残留 @占位符(AI 照抄字段值,不用占位符)
 │   ├── rebase.ts      # 插入位置重定位:请求时正文 → 落盘时正文(文本 LCS 骨架 + 顺延)
 │   ├── slotPlan.ts    # 单槽重写提示备注(只重写第 N 张 + 当前提示词锚点 + 其余画面清单)
-│   └── dshPlaceholder.ts # DSH 写手占位:世界书条目正文 + <dsh> 判定/构造/展示(纯数据,无 IO)
+│   └── dshPlaceholder.ts # DSH 写手占位:世界书条目正文(可编辑,空串=内置)+ <dsh> 判定/构造/展示(纯数据,无 IO)
 ├── backends/          # 出图后端(链路 B 的生成端)+ 共享尺寸工具
 │   ├── comfyui.ts     # ComfyUI:工作流模板 %占位符% 渲染、浏览器直连/ST 转发自动回退
 │   ├── comfyTemplates.ts # 简易模式:模板族(checkpoint/flux/anima/moss) + 参数组装 API JSON(无占位符)
@@ -1047,7 +1047,7 @@ API 对象 `Object.freeze`,一个插件改不动下一个插件拿到的东西�
 | 跟随主 API | src/api/client.ts 的 requestViaMainApi |
 | ComfyUI 工作流 / 出图 / 通道回退 | src/backends/comfyui.ts |
 | DSH 写手渠道(占位 → DSH 写串出图) | src/backends/dshBridge.ts(协议真源 docs/DSH-BRIDGE-PROTOCOL.md;分派在 generate.ts;面板 DshBridgePanel.vue) |
-| DSH 占位格式 / 世界书条目文本 | src/autoTag/dshPlaceholder.ts(`<dsh>` 子标签;解析在 st/imageTagRegex.ts) |
+| DSH 占位格式 / 世界书条目文本 | src/autoTag/dshPlaceholder.ts(`<dsh>` 子标签;解析在 st/imageTagRegex.ts;`dshWorldbookOf` 收口「空串=内置」,`composeDshPlaceholderSpec` 把当前正文包成委托单规范) |
 | ComfyUI 简易模式(模板组装/校验) | src/backends/comfyTemplates.ts(UI 在 ComfyUIPanel.vue) |
 | MOSS 写实线(模板族 / 固定负面 / 采样器锁) | src/backends/comfyTemplates.ts(`COMFY_TEMPLATES.moss` / `MOSS_DEFAULT_NEGATIVE` / `buildMossWorkflow`;UI 在 ComfyUIPanel.vue) |
 | 提示词规范方言(comfy tag 流 / moss 散文流) | src/state/settings.ts 的 `SpecDialect` + `ComfyWorkflowPreset.specDialect`;选择在 autoTag/prompt.ts 的 `autoTagProfile` / `backendPromptSpec` |
